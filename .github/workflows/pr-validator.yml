@@ -1,0 +1,29 @@
+# ORG-WIDE PR-VALIDATOR DISPATCHER — installed in every opencharly repo.
+name: charly/pr-validator
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  validate:
+    name: validate
+    uses: opencharly/.github/.github/workflows/pr-validator.yml@v1.0.0
+    with:
+      pr-number: ${{ github.event.pull_request.number }}
+    secrets:
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+      provider: ${{ vars.AI_REVIEW_PROVIDER }}
+      model: ${{ vars.AI_REVIEW_MODEL }}
+      base_url: ${{ vars.AI_REVIEW_BASE_URL }}
+      api_key: ${{ secrets.AI_REVIEW_API_KEY }}
