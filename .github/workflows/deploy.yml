@@ -1,17 +1,4 @@
 # Gate the candy manifest against the pinned charly.
-#
-# THIS WORKFLOW IS THE SOLE OWNER of this candy repo's validation. The repo pins
-# the charly repository as a submodule (.gitmodules); this workflow
-#
-#   1. checks out the pinned charly (with its box/* submodules),
-#   2. builds the charly binary from that checkout (the pin must resolve+build),
-#   3. validates this repo's charly.yml with it (`charly box validate` — the
-#      manifest must parse and validate at the pinned charly; a stale manifest
-#      or a schema advance at the pin is a hard failure: a candy PR must bump
-#      the charly pin and carry the manifest fix).
-#
-# There is no application to deploy: the repo itself IS the artifact the charly
-# resolver fetches at the pinned tag.
 name: candy
 
 on:
@@ -32,23 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: recursive
+
+      - name: Fetch the pinned charly source (CI-time temp checkout)
+        run: |
+          git clone --depth 1 --branch v2026.238.1242 https://github.com/opencharly/charly.git /tmp/charly
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: charly/charly/go.mod
-          cache-dependency-path: charly/charly/go.sum
+          go-version-file: /tmp/charly/charly/go.mod
+          cache-dependency-path: /tmp/charly/charly/go.sum
 
       - name: Build the charly binary from the pinned checkout
         run: |
-          cd charly/charly && go build -buildvcs=false -ldflags "-X main.BuildCalVer=candy-ci" -o ../../bin/charly .
+          mkdir -p /tmp/charly/bin
+          cd /tmp/charly/charly && go build -buildvcs=false -ldflags "-X main.BuildCalVer=candy-ci" -o /tmp/charly/bin/charly .
 
       - name: The candy manifest validates at the pinned charly
-        # The manifest's project schema version must equal the pinned charly's
-        # schema; the validate verb parses the node-form candy + its plan steps
-        # with the binary's full plugin vocabulary. A stale manifest (or a
-        # schema advance at the pin) is a hard failure: a candy PR must bump the
-        # charly pin and carry the manifest fix.
         run: |
-          cd charly && ../bin/charly box validate -C ..
+          /tmp/charly/bin/charly box validate
