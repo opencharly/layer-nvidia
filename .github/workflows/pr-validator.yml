@@ -18,7 +18,7 @@ permissions:
 jobs:
   validate:
     name: validate
-    uses: opencharly/.github/.github/workflows/pr-validator.yml@v1.0.0
+    uses: opencharly/.github/.github/workflows/pr-validator.yml@main
     with:
       pr-number: ${{ github.event.pull_request.number }}
     secrets:
