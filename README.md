@@ -8,8 +8,9 @@ fetches this repo at the pinned tag (`@github.com/opencharly/layer-nvidia:v<tag>
 
 ## Pins
 
-- `charly` — the charly checkout this candy's manifest is validated against
-  (submodule, `.gitmodules`).
+- `charly` — the charly checkout this candy's manifest is validated against,
+  cloned into `.ci/charly` at CI time at the pinned tag (no committed
+  submodule).
 
 ## Gate
 
