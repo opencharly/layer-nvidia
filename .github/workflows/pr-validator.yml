@@ -18,12 +18,13 @@ permissions:
 jobs:
   validate:
     name: validate
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.fork == false
     uses: opencharly/.github/.github/workflows/pr-validator.yml@main
     with:
-      pr-number: ${{ github.event.pull_request.number }}
-    secrets:
-      github_token: ${{ secrets.GITHUB_TOKEN }}
-      provider: ${{ vars.AI_REVIEW_PROVIDER }}
-      model: ${{ vars.AI_REVIEW_MODEL }}
-      base_url: ${{ vars.AI_REVIEW_BASE_URL }}
-      api_key: ${{ secrets.AI_REVIEW_API_KEY }}
+      pr-number: ${{ inputs.pr-number || github.event.pull_request.number }}
+      ai_review_provider: ${{ vars.AI_REVIEW_PROVIDER }}
+      ai_review_model: ${{ vars.AI_REVIEW_MODEL }}
+      ai_review_base_url: ${{ vars.AI_REVIEW_BASE_URL }}
+    secrets: inherit
