@@ -1,4 +1,4 @@
-version: 2026.232.0520
+version: 2026.240.1943
 nvidia:
     candy:
         version: 2026.229.1218
@@ -16,6 +16,9 @@ nvidia:
             - nvidia-container-toolkit
         distro:
             arch:
+                package:
+                    - nvidia-utils
+            omarchy:
                 package:
                     - nvidia-utils
             fedora:
@@ -87,6 +90,7 @@ nvidia:
               exclude_distro:
                 - arch
                 - cachyos
+                - omarchy
               exit_status: 0
               stdout:
                 - contains: "gpgcheck=1"
