@@ -11,7 +11,7 @@ permissions:
 jobs:
   tag:
     name: tag
-    uses: opencharly/.github/.github/workflows/tag-on-merge.yml@v1.0.0
+    uses: opencharly/.github/.github/workflows/tag-on-merge.yml@main
     with:
       pr-number: ${{ github.event.pull_request.number }}
     secrets:
