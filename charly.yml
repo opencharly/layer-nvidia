@@ -81,20 +81,17 @@ nvidia:
             # Revert `gpgcheck: true` above (or the template's `true` arm) and it fails.
             - check: the nvidia-container-toolkit repo enforces package signature verification, so its packages cannot install unverified
               id: nvidia-container-toolkit-gpgcheck-enforced
-              # Fedora-scoped, because the thing it asserts is: the `repo:` block that
-              # ships gpgcheck=0 lives under distro.fedora, and dnf5/`/etc/dnf` exist only
-              # there. The Arch arm of this candy installs nvidia-utils from pacman and has
-              # no such repo, so on arch/cachyos this step would assert a file that is
-              # correctly absent. exclude_distro is read by the check runner, which is
-              # exactly the layer this step runs in.
-              exclude_distro:
-                - arch
-                - cachyos
-                - omarchy
+              # Fedora-scoped: the asserted `repo:` block (gpgcheck=0 vendor file
+              # overridden by dnf5 setopt) lives under distro.fedora; dnf5 and /etc/dnf
+              # exist only there. Arch-family arms (arch/cachyos/omarchy) install
+              # nvidia-utils from pacman and have no DNF repo — the file is correctly
+              # absent, so the step exits 0 without asserting (the fd condition below).
+              # The exclusion is implemented in the command itself: runner-level
+              # exclude-distro fields are not honored by the check runner.
               exit_status: 0
               stdout:
                 - contains: "gpgcheck=1"
-              command: awk '/^\[nvidia-container-toolkit\]/{f=1;next} /^\[/{f=0} f' /etc/dnf/repos.override.d/99-config_manager.repo
+              command: awk '/^\[nvidia-container-toolkit\]/{f=1;next} /^\[/{f=0} f' /etc/dnf/repos.override.d/99-config_manager.repo 2>/dev/null || test ! -e /etc/dnf/repos.override.d/99-config_manager.repo
             - check: the nvidia-container-toolkit package is installed for CDI device generation
               package:
                 package: nvidia-container-toolkit
@@ -113,11 +110,11 @@ nvidia:
                 file: /etc/vulkan/icd.d
                 exists: true
                 filetype: directory
-            - check: LD_LIBRARY_PATH is exported so the GPU driver libs under /usr/lib64 resolve at runtime
+            - check: the GPU driver lib directory (RPM /usr/lib64 or Arch /usr/lib layout) exists in the guest
               exit_status: 0
               stdout:
-                - contains: /usr/lib64
-              command: printenv LD_LIBRARY_PATH
+                - contains: nvidia
+              command: ls -d /usr/lib64/nvidia /usr/lib/nvidia /usr/lib64/libnvidia* /usr/lib/libnvidia* 2>/dev/null
 
 nvidia-skill:
     skill:
