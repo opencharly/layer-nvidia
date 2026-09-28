@@ -1,19 +1,75 @@
-# layer-nvidia
+# nvidia
 
-The `layer-nvidia` candy of the [opencharly/charly](https://github.com/opencharly/charly)
-candy library, as a standalone repo (the candy de-submodule cutover).
+NVIDIA GPU runtime layer for OpenCharly images.
 
-The candy manifest lives at the repo root (`charly.yml`); the charly resolver
-fetches this repo at the pinned tag (`@github.com/opencharly/layer-nvidia:v<tag>`).
+The `nvidia` candy prepares an image to use an NVIDIA GPU. It installs
+`nvidia-container-toolkit` — the `nvidia-ctk` CLI that generates CDI device
+specs — together with the per-distro driver libraries, exports
+`LD_LIBRARY_PATH=/usr/lib64` so the driver libraries resolve, and prepares
+`/etc/vulkan/icd.d` to hold the NVIDIA Vulkan ICD symlinks. It is the GPU
+runtime base that GPU-accelerated boxes compose; the CUDA toolchain is a
+separate `cuda` layer.
 
-## Pins
+## What it provides
 
-- `charly` — the charly checkout this candy's manifest is validated against,
-  cloned into `.ci/charly` at CI time at the pinned tag (no committed
-  submodule).
+| Property | Value |
+|---|---|
+| Layer / candy | `nvidia` |
+| Package | `nvidia-container-toolkit` (all distros) |
+| Binary | `/usr/bin/nvidia-ctk` |
+| Environment | `LD_LIBRARY_PATH=/usr/lib64` |
+| Directory | `/etc/vulkan/icd.d` (NVIDIA Vulkan ICD / layer symlinks) |
+| Service / port | none |
 
-## Gate
+Per-distro driver packages:
 
-`.github/workflows/deploy.yml` builds charly from the pinned checkout and runs
-`charly box validate` on this repo's `charly.yml` — the manifest must parse and
-validate at the pinned charly (the project schema version tracks the pin).
+- `arch` / `omarchy` — `nvidia-utils`
+- `fedora` — `libva-nvidia-driver` (from the negativo17 `fedora-multimedia`
+  repo) plus NVIDIA's own `nvidia-container-toolkit` repo, with package
+  signature verification enforced (`gpgcheck=1`, overriding NVIDIA's shipped
+  `gpgcheck=0`).
+
+## How to use it
+
+Compose the layer by pinning this repo in a box's `candy:` list:
+
+```yaml
+my-box:
+  candy:
+    base: fedora                       # or cachyos / omarchy for the Arch driver layout
+    candy:
+      - '@github.com/opencharly/layer-nvidia:v2026.245.1541'
+```
+
+Once the image is built and the GPU is attached by the runtime:
+
+```bash
+nvidia-smi                 # GPU information
+nvidia-ctk --version       # CDI toolkit
+```
+
+The layer bakes every artifact (package, `nvidia-ctk` binary, exported path,
+Vulkan ICD directory) into the image, so it is verifiable without a physical
+GPU. A GPU-accelerated box pairs it with `cuda` (CUDA toolkit, cuDNN) — for
+example `python-ml`, `jupyter`, `ollama`, and `comfyui`.
+
+## Layout
+
+- `charly.yml` — the candy manifest: the multi-distro package arms, the
+  `LD_LIBRARY_PATH` environment, the Vulkan ICD wiring `plan:`, the `plan:`
+  checks, and the embedded `skill:` entity.
+- `CHANGELOG/` — per-CalVer release notes.
+- `.github/workflows/deploy.yml` — builds the pinned charly and runs
+  `charly box validate` on the manifest (the merge gate).
+- `.github/workflows/tag-on-merge.yml` — CalVer tag + `CHANGELOG/` on merge.
+- `README.md` — this user overview.
+
+## Related
+
+- Owning skill: `/charly-distros:nvidia`
+- CUDA toolkit: `/charly-distros:cuda`
+- Derived GPU boxes: `/charly-languages:python-ml`, `/charly-jupyter:jupyter`,
+  `/charly-ollama:ollama`, `/charly-comfyui:comfyui`
+- Arch/CachyOS GPU base sibling: `cachyos.nvidia` in `opencharly/distro-cachyos`
+- [`opencharly/charly`](https://github.com/opencharly/charly) — the charly CLI and image builder
+- [`opencharly/opencharly`](https://github.com/opencharly/opencharly) — the umbrella
