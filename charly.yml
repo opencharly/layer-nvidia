@@ -1,7 +1,5 @@
-version: 2026.232.0520
 nvidia:
     candy:
-        version: 2026.229.1218
         description: |
             NVIDIA GPU runtime — nvidia-container-toolkit (nvidia-ctk CDI) plus the driver-lib path and Vulkan ICD wiring
             Installs nvidia-container-toolkit (the nvidia-ctk CLI that generates
