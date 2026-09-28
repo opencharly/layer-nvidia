@@ -59,7 +59,6 @@ example `python-ml`, `jupyter`, `ollama`, and `comfyui`.
   `LD_LIBRARY_PATH` environment, the Vulkan ICD wiring `plan:`, the `plan:`
   checks, and the embedded `skill:` entity.
 - `CHANGELOG/` — per-CalVer release notes.
-- `.github/workflows/` — the org-wide `charly/pr-validator` gate; no per-repo candy gate.
 - `.github/workflows/tag-on-merge.yml` — CalVer tag + `CHANGELOG/` on merge.
 - `README.md` — this user overview.
 
