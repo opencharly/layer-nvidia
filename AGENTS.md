@@ -10,7 +10,6 @@ Canonical files:
 
 - `charly.yml` — the `nvidia:` candy entity and the `nvidia-skill:` skill entity.
 - `CHANGELOG/` — per-CalVer release history; read it before changing baked checks.
-- `.github/workflows/deploy.yml` — the manifest gate.
 - `.github/workflows/tag-on-merge.yml` — CalVer tag + `CHANGELOG/` on merge.
 - `README.md` — user overview only; never agent guidance.
 
@@ -26,12 +25,11 @@ Canonical files:
 
 ## Build / validate / test
 
-- `charly box validate` at the repo root — the same structural gate CI runs: the
-  manifest must parse and validate at the pinned charly. The CI pin lives in
-  `.github/workflows/deploy.yml`; keep the `version:` schema stamp within the
-  pinned charly's supported range (do not migrate the stamp past the pin).
-- `.github/workflows/deploy.yml` — builds the pinned charly from a CI-time
-  checkout and runs `charly box validate`. This is the merge gate.
+- `charly box validate` at the repo root — the structural check: the manifest
+  must parse and validate at the installed charly.
+- The merge gate is the **org-wide** `charly/pr-validator` (required check
+  `validate / validate`, defined in `opencharly/.github`); this repo has no
+  per-repo candy gate.
 - The candy's `plan:` `check:` steps are the functional evidence; they must stay
   valid on every distro arm they run on. Where a check only applies to one
   distro family (e.g. a Fedora-only DNF path), scope it in the command itself —

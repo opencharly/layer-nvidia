@@ -59,8 +59,6 @@ example `python-ml`, `jupyter`, `ollama`, and `comfyui`.
   `LD_LIBRARY_PATH` environment, the Vulkan ICD wiring `plan:`, the `plan:`
   checks, and the embedded `skill:` entity.
 - `CHANGELOG/` — per-CalVer release notes.
-- `.github/workflows/deploy.yml` — builds the pinned charly and runs
-  `charly box validate` on the manifest (the merge gate).
 - `.github/workflows/tag-on-merge.yml` — CalVer tag + `CHANGELOG/` on merge.
 - `README.md` — this user overview.
 
