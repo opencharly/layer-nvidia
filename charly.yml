@@ -79,17 +79,23 @@ nvidia:
             # Revert `gpgcheck: true` above (or the template's `true` arm) and it fails.
             - check: the nvidia-container-toolkit repo enforces package signature verification, so its packages cannot install unverified
               id: nvidia-container-toolkit-gpgcheck-enforced
-              # Fedora-scoped: the asserted `repo:` block (gpgcheck=0 vendor file
-              # overridden by dnf5 setopt) lives under distro.fedora; dnf5 and /etc/dnf
-              # exist only there. Arch-family arms (arch/cachyos/omarchy) install
-              # nvidia-utils from pacman and have no DNF repo — the file is correctly
-              # absent, so the step exits 0 without asserting (the fd condition below).
-              # The exclusion is implemented in the command itself: runner-level
-              # exclude-distro fields are not honored by the check runner.
-              exit_status: 0
-              stdout:
-                - contains: "gpgcheck=1"
-              command: awk '/^\[nvidia-container-toolkit\]/{f=1;next} /^\[/{f=0} f' /etc/dnf/repos.override.d/99-config_manager.repo 2>/dev/null || test ! -e /etc/dnf/repos.override.d/99-config_manager.repo
+              # Fedora-scoped, implemented IN THE COMMAND (runner-level exclude-distro is not honoured).
+              #
+              # The assertion used to live in a `stdout:` matcher while the Arch skip path merely exited
+              # 0. On the Arch arm the command therefore succeeded, printed nothing, and the matcher still
+              # demanded "gpgcheck=1" -- a red check on an arm where that fact cannot hold by construction.
+              # Measured on cachyos: `stdout: expected to contain "gpgcheck=1" (got: )`.
+              #
+              # The assertion now lives where the distro decision is made, and the matcher is gone: on
+              # Fedora the repo section must carry gpgcheck=1 or the step FAILS; on the Arch-family arms
+              # there is no DNF repo to check, so it exits 0 honestly instead of printing a string it did
+              # not verify (which would be a vacuous probe).
+              command: |
+                set -eu
+                f=/etc/dnf/repos.override.d/99-config_manager.repo
+                [ -e "$f" ] || exit 0
+                awk '/^\[nvidia-container-toolkit\]/{s=1;next} /^\[/{s=0} s' "$f" | grep -q 'gpgcheck=1' \
+                  || { echo "the nvidia-container-toolkit repo does not enforce gpgcheck=1: $(awk '/^\[nvidia-container-toolkit\]/{s=1;next} /^\[/{s=0} s' "$f" | tr '\n' ' ')"; exit 1; }
             - check: the nvidia-container-toolkit package is installed for CDI device generation
               package:
                 package: nvidia-container-toolkit
