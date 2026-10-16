@@ -92,10 +92,26 @@ nvidia:
               # not verify (which would be a vacuous probe).
               command: |
                 set -eu
+                # Skip by DISTRO, never by file presence. "the override file is absent" is true on the
+                # Arch arms but ALSO on a Fedora where the override was never written -- and there a
+                # missing override leaves NVIDIA's vendor gpgcheck=0 repo in force, which is exactly what
+                # this check exists to catch. A file-presence proxy for "Arch" made that Fedora a
+                # false-green. So:
+                #   * no DNF at all (arch/cachyos/omarchy)      -> exit 0: nothing to assert, honestly;
+                #   * a DNF host whose override file is MISSING -> FAIL: the vendor gpgcheck=0 repo stands;
+                #   * a DNF host whose section lacks gpgcheck=1 -> FAIL.
+                # The section is extracted ONCE and reused for the assertion and the message.
+                if [ ! -e /etc/dnf ] && [ ! -e /etc/yum.repos.d ]; then
+                  exit 0
+                fi
                 f=/etc/dnf/repos.override.d/99-config_manager.repo
-                [ -e "$f" ] || exit 0
-                awk '/^\[nvidia-container-toolkit\]/{s=1;next} /^\[/{s=0} s' "$f" | grep -q 'gpgcheck=1' \
-                  || { echo "the nvidia-container-toolkit repo does not enforce gpgcheck=1: $(awk '/^\[nvidia-container-toolkit\]/{s=1;next} /^\[/{s=0} s' "$f" | tr '\n' ' ')"; exit 1; }
+                section=$(awk '/^\[nvidia-container-toolkit\]/{x=1;next} /^\[/{x=0} x' "$f" 2>/dev/null || true)
+                printf '%s\n' "$section" | grep -q 'gpgcheck=1' || {
+                  echo "the nvidia-container-toolkit repo does not enforce gpgcheck=1 on this DNF host"
+                  echo "  file: $f"
+                  echo "  section: ${section:-<absent>}"
+                  exit 1
+                }
             - check: the nvidia-container-toolkit package is installed for CDI device generation
               package:
                 package: nvidia-container-toolkit
