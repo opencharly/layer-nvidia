@@ -108,11 +108,11 @@ nvidia:
                 file: /etc/vulkan/icd.d
                 exists: true
                 filetype: directory
-            - check: the GPU driver lib directory (RPM /usr/lib64 or Arch /usr/lib layout) exists in the guest
+            - check: the nvidia userspace for THIS distro is present, either the Arch driver libs from nvidia-utils or the Fedora VA-API driver from libva-nvidia-driver
               exit_status: 0
               stdout:
                 - contains: nvidia
-              command: ls -d /usr/lib64/nvidia /usr/lib/nvidia /usr/lib64/libnvidia* /usr/lib/libnvidia* 2>/dev/null
+              command: ls -d /usr/lib64/nvidia /usr/lib/nvidia /usr/lib64/libnvidia* /usr/lib/libnvidia* /usr/lib64/dri/nvidia_drv_video.so /usr/lib/dri/nvidia_drv_video.so 2>/dev/null || true
 
 nvidia-skill:
     skill:
