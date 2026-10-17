@@ -1,8 +1,9 @@
 nvidia-probe:
     candy:
-        base: arch.arch
+        base: arch.check-tmux-box
         candy:
             - nvidia
         description: >-
-            Arch-family probe box: this repo own nvidia candy on a dnf-less base, so the
-            gpgcheck probe must skip honestly instead of failing.
+            Arch-family probe box: an arch-namespace base that runs a long-lived tmux server
+            (so the pod can start) plus this repo own nvidia candy, so the gpgcheck probe runs
+            on a dnf-less arm.
