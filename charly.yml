@@ -101,7 +101,12 @@ nvidia:
                 #   * a DNF host whose override file is MISSING -> FAIL: the vendor gpgcheck=0 repo stands;
                 #   * a DNF host whose section lacks gpgcheck=1 -> FAIL.
                 # The section is extracted ONCE and reused for the assertion and the message.
-                if [ ! -e /etc/dnf ] && [ ! -e /etc/yum.repos.d ]; then
+                # "no DNF at all" means no dnf TOOLING -- not "neither directory exists". Arch-family
+                # arms have no /etc/dnf, but /etc/yum.repos.d can exist there (an unrelated package may
+                # create it), and testing both directories made the guard `true && false` = false, so
+                # the arm fell through to the Fedora assertion and FAILED on a DNF repo it does not have.
+                # Measured: cachyos failed here with the pre-#12 content gone and this guard in place.
+                if ! command -v dnf >/dev/null 2>&1 && [ ! -e /etc/dnf ]; then
                   exit 0
                 fi
                 f=/etc/dnf/repos.override.d/99-config_manager.repo
