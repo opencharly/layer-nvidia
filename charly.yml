@@ -1,3 +1,9 @@
+import:
+    - arch: "@github.com/opencharly/distro-arch:v2026.290.1914"
+discover:
+    - path: box
+      recursive: true
+
 nvidia:
     candy:
         description: |
@@ -222,3 +228,12 @@ nvidia-skill:
             
             - `/charly-image:image` — image family umbrella (`candy:` image entries — those carrying `base:`/`from:` — in `charly.yml`, build/validate/inspect/list)
             - `/charly-build:build` — the embedded build vocabulary (distros, builders, init-systems)
+
+check-nvidia-probe:
+    pod:
+        image: nvidia-probe
+        disposable: true
+        lifecycle: dev
+        description: >-
+            Arch-family bed for this repo own nvidia candy: the arch base has no dnf,
+            so the gpgcheck probe must skip honestly rather than fail.

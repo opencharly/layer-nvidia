@@ -1,0 +1,8 @@
+nvidia-probe:
+    candy:
+        base: arch.arch
+        candy:
+            - nvidia
+        description: >-
+            Arch-family probe box: this repo own nvidia candy on a dnf-less base, so the
+            gpgcheck probe must skip honestly instead of failing.
