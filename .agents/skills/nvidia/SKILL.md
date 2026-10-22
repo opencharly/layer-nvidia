@@ -49,6 +49,37 @@ charly shell nvidia
 - `/charly-distros:nvidia` — NVIDIA GPU runtime (driver libs, CDI generation via nvidia-ctk)
 - `/charly-distros:cuda` — CUDA toolkit and GPU development libraries
 
+## CDI host layer
+
+`nvidia-cdi-host` extends `nvidia` for a **host** (not a workload image). It composes
+the `nvidia` candy and then:
+
+- runs `nvidia-ctk runtime configure --runtime=containerd` with an explicit,
+  layer-owned `--drop-in-config /etc/containerd/conf.d/99-nvidia.toml`, **without**
+  `--enable-cdi` (CDI is always on in containerd 2.x and the key is ignored with a
+  warning) and **without** `--set-as-default` (the handler is selected per pod or
+  container). The command also records the drop-in directory in `config.toml`'s
+  `imports`, and the layer fails closed if the drop-in or the import does not land;
+- enables the toolkit's `nvidia-cdi-refresh.path` and `.service`, so
+  **`/var/run/cdi/nvidia.yaml`** is regenerated at boot, on nvidia module load and
+  when the toolkit changes. A one-shot `nvidia-ctk cdi generate
+  --output=/etc/cdi/nvidia.yaml` is a snapshot: the driver version appears ~115x in
+  the generated spec and goes stale on the first driver upgrade;
+- links the refreshed spec into the rootless client's config dir:
+  `~/.config/cdi/nvidia.yaml -> /var/run/cdi/nvidia.yaml`. The rootless spec dirs
+  are `$XDG_CONFIG_HOME/cdi` and `$XDG_RUNTIME_DIR/cdi`, never `/etc/cdi`.
+
+Verify the **device**, never an exit code: `nvidia-ctk cdi list` exits 0 on an
+invalid spec (`Found 0 CDI devices`), and two same-priority specs leave the device
+dropped. The layer's checks require `crictl info` to serve the `nvidia` handler,
+`nvidia-ctk cdi list` to report `nvidia.com/gpu=all`, and
+`--device nvidia.com/gpu=all` to run `nvidia-smi -L`. The
+`check-nvidia-cdi-host` bed proves the same sequence rootful and rootless on a
+GPU host, and skips visibly with `prereq-gpu-skipped` on a host without the GPU.
+
+Arch/omarchy only: a Fedora arm is additive and is not claimed until its own
+disposable bed exists.
+
 ## Derived Boxes
 
 - `/charly-languages:python-ml` — ML Python environment
