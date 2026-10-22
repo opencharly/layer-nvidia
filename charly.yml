@@ -147,6 +147,458 @@ nvidia:
                 - contains: nvidia
               command: ls -d /usr/lib64/nvidia /usr/lib/nvidia /usr/lib64/libnvidia* /usr/lib/libnvidia* /usr/lib64/dri/nvidia_drv_video.so /usr/lib/dri/nvidia_drv_video.so 2>/dev/null || true
 
+nvidia-cdi-host:
+    candy:
+        description: |
+            NVIDIA CDI host layer — the containerd nvidia handler, a durable CDI spec, and the rootless client path
+            Composes the nvidia candy and configures containerd for CDI:
+            nvidia-ctk runtime configure --runtime=containerd (NO --enable-cdi — the
+            key is ignored on containerd 2.x and emits a warning — and no
+            --set-as-default) writes a drop-in at the layer-owned
+            /etc/containerd/conf.d/99-nvidia.toml and records that directory in
+            config.toml's imports, so a default drop-in path refused as permission
+            denied cannot leave a host silently unconfigured. Restarts containerd so
+            the handler is SERVED, not merely written — containerd reads its config and
+            drop-ins at startup. Enables and starts the toolkit's nvidia-cdi-refresh.path
+            and .service so /var/run/cdi/nvidia.yaml is regenerated at boot, on module
+            load and when the toolkit changes, and exists on a fresh host before the
+            checks run — a one-shot generate into /etc/cdi is a snapshot that goes stale
+            on the first driver upgrade. Links the refreshed spec into the rootless
+            client's config dir (the user's $XDG_CONFIG_HOME/cdi, default
+            ~/.config/cdi -> /var/run/cdi/nvidia.yaml), because the rootless spec dirs
+            are $XDG_CONFIG_HOME/cdi and $XDG_RUNTIME_DIR/cdi, never /etc/cdi. The
+            checks gate on the DEVICE: crictl info serves the nvidia handler and
+            nvidia-ctk cdi list reports nvidia.com/gpu=all; an exit code is not evidence
+            because cdi list exits 0 on an invalid spec.
+            Arch/omarchy only: a Fedora arm is additive and is not claimed until its
+            own disposable bed exists (CONTAINERD-IMAGES.md §1).
+        candy:
+            - nvidia
+        distro:
+            arch:
+                package:
+                    - containerd
+                    - cri-tools
+                    - nerdctl
+            omarchy:
+                package:
+                    - containerd
+                    - cri-tools
+                    - nerdctl
+        plan:
+            - run: configure containerd's nvidia runtime handler with a drop-in this layer owns
+              id: nvidia-handler-configure
+              run_as: root
+              command: |
+                set -eu
+                conf=/etc/containerd/config.toml
+                dropin=/etc/containerd/conf.d/99-nvidia.toml
+                [ -f "$conf" ] || { echo "containerd config not found: $conf" >&2; exit 1; }
+                install -d -m 0755 /etc/containerd/conf.d
+                # NO --enable-cdi: CDI is always on in containerd 2.x and the key is
+                # ignored with a warning. NO --set-as-default: the handler is selected
+                # per pod or per container. --drop-in-config names the path this layer
+                # owns, so a default path refused as permission denied cannot leave the
+                # host in the silently-unconfigured state the command otherwise reports
+                # as success.
+                nvidia-ctk runtime configure --runtime=containerd --config "$conf" --drop-in-config "$dropin"
+                grep -q 'runtimes\.nvidia' "$dropin"
+                grep -q 'BinaryName = "/usr/bin/nvidia-container-runtime"' "$dropin"
+                grep -Fq '/etc/containerd/conf.d/*.toml' "$conf"
+                if grep -q 'enable_cdi' "$dropin"; then
+                  echo "the drop-in carries the enable_cdi key containerd 2.x ignores" >&2
+                  exit 1
+                fi
+            - run: restart containerd so the new handler is served, not merely written
+              id: nvidia-handler-reload
+              run_as: root
+              command: |
+                set -eu
+                # containerd reads its config and drop-ins at startup; a drop-in written
+                # while the daemon runs is not served (measured on a scratch daemon:
+                # 0 nvidia runtimes after the write, 2 after a restart). In a container
+                # build there is no daemon to restart; the deployed host always has one.
+                if [ -d /run/systemd/system ]; then
+                  systemctl restart containerd
+                fi
+            - run: enable and start the toolkit's CDI refresh path and service
+              id: nvidia-cdi-refresh-enable
+              run_as: root
+              command: |
+                set -eu
+                systemctl cat nvidia-cdi-refresh.path >/dev/null
+                systemctl cat nvidia-cdi-refresh.service >/dev/null
+                systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service
+                # Enabling is a boot-time promise; starting it now is what makes
+                # /var/run/cdi/nvidia.yaml exist on a fresh host before the checks run.
+                if [ -d /run/systemd/system ]; then
+                  systemctl start nvidia-cdi-refresh.path
+                  systemctl start nvidia-cdi-refresh.service
+                fi
+            - run: write the rootless CDI link helper
+              id: nvidia-cdi-rootless-link-helper
+              write: /usr/local/bin/nvidia-cdi-rootless-link
+              mode: "0755"
+              run_as: root
+              content: |
+                #!/bin/sh
+                # ONE implementation of the rootless CDI spec link. The rootless client
+                # resolves CDI on its own side: its spec dirs are $XDG_CONFIG_HOME/cdi
+                # and $XDG_RUNTIME_DIR/cdi, never /etc/cdi. Resolve the user's
+                # XDG_CONFIG_HOME from their login environment, fall back to the client's
+                # documented default, and link the REFRESHED file, never a snapshot.
+                # usage: nvidia-cdi-rootless-link <create|check> <uid>
+                set -eu
+                mode=$1
+                uid=$2
+                u=$(getent passwd "$uid" | cut -d: -f1)
+                h=$(getent passwd "$uid" | cut -d: -f6)
+                xdg=$(runuser -u "$u" -- sh -lc 'printf %s "$XDG_CONFIG_HOME"' 2>/dev/null || true)
+                case "$xdg" in
+                  /*) ;;
+                  *) xdg=$h/.config ;;
+                esac
+                link=$xdg/cdi/nvidia.yaml
+                if [ "$mode" = create ]; then
+                  [ -d "$xdg" ] || install -d -o "$u" -g "$u" -m 0700 "$xdg"
+                  [ -d "$xdg/cdi" ] || install -d -o "$u" -g "$u" -m 0755 "$xdg/cdi"
+                  ln -sfn /var/run/cdi/nvidia.yaml "$link"
+                  chown -h "$u:$u" "$link"
+                fi
+                test "$(readlink "$link")" = /var/run/cdi/nvidia.yaml
+                printf '%s\n' "$link"
+            - run: link the refreshed CDI spec into the rootless client's config dir
+              id: nvidia-cdi-rootless-link
+              run_as: root
+              command: |
+                set -eu
+                # The rule is the mechanism for a user that does not exist yet; the
+                # client default is %h/.config because systemd-tmpfiles carries no
+                # XDG_CONFIG_HOME specifier. When a user exists the helper resolves the
+                # user's own XDG_CONFIG_HOME and creates the link eagerly.
+                install -d -m 0755 /etc/user-tmpfiles.d
+                printf '%s\n' 'L+ %h/.config/cdi/nvidia.yaml - - - - /var/run/cdi/nvidia.yaml' > /etc/user-tmpfiles.d/nvidia-cdi.conf
+                uid=$(getent passwd 1000 >/dev/null 2>&1 && echo 1000 || true)
+                if [ -z "$uid" ]; then
+                  uid=$(awk -F: '$3>=1000 && $3<65534 {print $3; exit}' /etc/passwd)
+                fi
+                if [ -z "$uid" ]; then
+                  echo "no user account yet; the user-tmpfiles rule creates the client-default link at first login"
+                  exit 0
+                fi
+                /usr/local/bin/nvidia-cdi-rootless-link create "$uid"
+            - check: the containerd drop-in registers the nvidia runtime handler
+              id: nvidia-handler-dropin
+              exit_status: 0
+              stdout:
+                - contains: HANDLER-DROPIN-OK
+              command: |
+                set -eu
+                f=/etc/containerd/conf.d/99-nvidia.toml
+                grep -q 'runtimes\.nvidia' "$f"
+                grep -q 'BinaryName = "/usr/bin/nvidia-container-runtime"' "$f"
+                echo HANDLER-DROPIN-OK
+            - check: the drop-in does not carry the enable_cdi key containerd 2.x ignores
+              id: nvidia-dropin-no-enable-cdi
+              exit_status: 0
+              stdout:
+                - contains: NO-ENABLE-CDI-OK
+              command: |
+                set -eu
+                if grep -q 'enable_cdi' /etc/containerd/conf.d/99-nvidia.toml; then
+                  echo "enable_cdi is present; containerd 2.x ignores it" >&2
+                  exit 1
+                fi
+                echo NO-ENABLE-CDI-OK
+            - check: containerd's config imports the drop-in directory
+              id: nvidia-imports
+              exit_status: 0
+              stdout:
+                - contains: IMPORTS-OK
+              command: |
+                set -eu
+                grep -Fq '/etc/containerd/conf.d/*.toml' /etc/containerd/config.toml
+                echo IMPORTS-OK
+            - check: the CDI refresh path and service are enabled so the spec is regenerated, not snapshotted
+              id: nvidia-refresh-enabled
+              exit_status: 0
+              stdout:
+                - contains: REFRESH-UNITS-OK
+              command: |
+                set -eu
+                test -L /etc/systemd/system/multi-user.target.wants/nvidia-cdi-refresh.path
+                test -L /etc/systemd/system/multi-user.target.wants/nvidia-cdi-refresh.service
+                echo REFRESH-UNITS-OK
+            - check: the rootless client's CDI spec link targets the refreshed spec
+              id: nvidia-rootless-link
+              exit_status: 0
+              command: |
+                set -eu
+                test -f /etc/user-tmpfiles.d/nvidia-cdi.conf
+                grep -Fq 'L+ %h/.config/cdi/nvidia.yaml - - - - /var/run/cdi/nvidia.yaml' /etc/user-tmpfiles.d/nvidia-cdi.conf
+                uid=$(getent passwd 1000 >/dev/null 2>&1 && echo 1000 || true)
+                if [ -z "$uid" ]; then
+                  uid=$(awk -F: '$3>=1000 && $3<65534 {print $3; exit}' /etc/passwd)
+                fi
+                test -x /usr/local/bin/nvidia-cdi-rootless-link
+                if [ -z "$uid" ]; then
+                  echo "ROOTLESS-LINK-RULE-OK"
+                  exit 0
+                fi
+                sudo -n /usr/local/bin/nvidia-cdi-rootless-link check "$uid"
+                echo ROOTLESS-LINK-OK
+            - check: nvidia-ctk cdi list reports the nvidia.com/gpu=all device
+              id: nvidia-cdi-device-lists
+              context:
+                - runtime
+              exit_status: 0
+              stdout:
+                - contains: nvidia.com/gpu=all
+              command:
+                command: nvidia-ctk cdi list
+                in_container: false
+            - check: crictl info serves the nvidia runtime handler
+              id: nvidia-handler-live
+              context:
+                - runtime
+              exit_status: 0
+              stdout:
+                - contains: '"nvidia"'
+              command:
+                command: |
+                  set -eu
+                  sudo -n crictl --runtime-endpoint unix:///run/containerd/containerd.sock --image-endpoint unix:///run/containerd/containerd.sock info
+                in_container: false
+            - check: a rootful CDI injection runs nvidia-smi -L through nvidia.com/gpu=all
+              id: nvidia-injection-rootful
+              context:
+                - runtime
+              timeout: 900s
+              exit_status: 0
+              stdout:
+                - contains: NVIDIA
+              command:
+                command: |
+                  set -eu
+                  sudo -n nerdctl --namespace default run --rm --device nvidia.com/gpu=all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi -L
+                in_container: false
+            - check: the rootless client resolves the same device through the linked refreshed spec
+              id: nvidia-rootless-device
+              context:
+                - runtime
+              exit_status: 0
+              command:
+                command: |
+                  set -eu
+                  uid=$(getent passwd 1000 >/dev/null 2>&1 && echo 1000 || true)
+                  if [ -z "$uid" ]; then
+                    uid=$(awk -F: '$3>=1000 && $3<65534 {print $3; exit}' /etc/passwd)
+                  fi
+                  if [ -z "$uid" ]; then
+                    echo "ROOTLESS-DEVICE-RULE-OK: no user yet; the user-tmpfiles rule creates the client-default link at first login"
+                    exit 0
+                  fi
+                  u=$(getent passwd "$uid" | cut -d: -f1)
+                  out=$(sudo -n runuser -u "$u" -- nvidia-ctk cdi list)
+                  printf '%s\n' "$out"
+                  printf '%s\n' "$out" | grep -q 'nvidia.com/gpu=all'
+                  echo ROOTLESS-DEVICE-OK
+                in_container: false
+
+nvidia-cdi-host-probe:
+    local:
+        description: >-
+            Local template that applies the nvidia-cdi-host layer to a GPU host — the
+            template the check-nvidia-cdi-host bed deploys.
+        candy:
+            - nvidia-cdi-host
+
+check-nvidia-cdi-host:
+    local:
+        from: nvidia-cdi-host-probe
+        host: local
+        disposable: true
+        lifecycle: dev
+        requires_shared: [nvidia-gpu]
+        description: >-
+            The nvidia-cdi-host acceptance bed: absence, perform, presence, on a GPU
+            host. Step 1 starts a SCRATCH containerd (own root, state and socket) with
+            no nvidia handler and an empty spec dir, and asserts neither the handler nor
+            the device is present. Step 2 runs the layer's own configure command against
+            that scratch config. Step 3 asserts crictl info serves the nvidia handler,
+            nvidia-ctk cdi list reports nvidia.com/gpu=all, and a rootful CDI injection
+            runs nvidia-smi -L. Step 4 does the same rootless through a scratch rootless
+            containerd and the linked refreshed spec. Step 5 checks the deployed layer's
+            artifacts. The host's /run/containerd socket and its CDI specs are read
+            only: every daemon is on its own scratch socket. On a host without the
+            claimed GPU the bed skips visibly with prereq-gpu-skipped, never passes.
+            The data-producing steps were executed individually against scratch daemons
+            on the RTX 4080 SUPER host; a full charly check run on a DISPOSABLE GPU host
+            is the remaining gate and is not claimed by this change.
+        install_opts:
+            with_service: true
+            allow_root_tasks: true
+        plan:
+            - check: absence — a scratch containerd with no nvidia handler serves no nvidia runtime and an empty spec dir lists no device
+              id: nvidia-cdi-absent-before
+              context:
+                - runtime
+              timeout: 300s
+              exit_status: 0
+              stdout:
+                - contains: CDI-ABSENT-BEFORE
+              command:
+                command: |
+                  set -eu
+                  d=/tmp/nvidia-cdi-bed
+                  rm -rf "$d"
+                  mkdir -p "$d/conf.d" "$d/other" "$d/root" "$d/state" "$d/specs"
+                  cat > "$d/config.toml" <<EOF
+                  version = 4
+                  root = "$d/root"
+                  state = "$d/state"
+                  imports = ["$d/other/*.toml"]
+                  [plugins."io.containerd.grpc.v1.cri"]
+                    [plugins."io.containerd.grpc.v1.cri".containerd]
+                      default_runtime_name = "runc"
+                  EOF
+                  sudo -n containerd --config "$d/config.toml" --address "$d/containerd.sock" --log-level error >"$d/daemon.log" 2>&1 &
+                  echo $! > "$d/pid"
+                  trap 'sudo -n kill "$(cat "$d/pid")" 2>/dev/null || true' EXIT
+                  ready=0
+                  for i in $(seq 1 100); do
+                    if sudo -n crictl --runtime-endpoint "unix://$d/containerd.sock" --image-endpoint "unix://$d/containerd.sock" info > "$d/info-before.json" 2>/dev/null; then ready=1; break; fi
+                    sleep 0.1
+                  done
+                  [ "$ready" = 1 ] || { echo "scratch containerd did not become ready" >&2; cat "$d/daemon.log" >&2; exit 1; }
+                  sudo -n kill "$(cat "$d/pid")" || true
+                  if grep -q '"nvidia"' "$d/info-before.json"; then
+                    echo "the nvidia handler is already served before the change" >&2
+                    exit 1
+                  fi
+                  nvidia-ctk cdi list --spec-dir "$d/specs" > "$d/list-before.txt" 2>&1 || true
+                  if grep -q 'nvidia.com/gpu=all' "$d/list-before.txt"; then
+                    echo "the device is already listed from an empty spec dir" >&2
+                    exit 1
+                  fi
+                  echo CDI-ABSENT-BEFORE
+                in_container: false
+            - check: perform — the layer's configure command writes the handler drop-in into the scratch containerd config
+              id: nvidia-cdi-perform
+              context:
+                - runtime
+              timeout: 300s
+              exit_status: 0
+              stdout:
+                - contains: CDI-PERFORM-OK
+              command:
+                command: |
+                  set -eu
+                  d=/tmp/nvidia-cdi-bed
+                  test -f "$d/config.toml"
+                  nvidia-ctk runtime configure --runtime=containerd --config "$d/config.toml" --drop-in-config "$d/conf.d/99-nvidia.toml"
+                  grep -q 'runtimes\.nvidia' "$d/conf.d/99-nvidia.toml"
+                  grep -q 'BinaryName = "/usr/bin/nvidia-container-runtime"' "$d/conf.d/99-nvidia.toml"
+                  grep -Fq "$d/conf.d/*.toml" "$d/config.toml"
+                  if grep -q 'enable_cdi' "$d/conf.d/99-nvidia.toml"; then
+                    echo "enable_cdi must not be written on containerd 2.x" >&2
+                    exit 1
+                  fi
+                  echo CDI-PERFORM-OK
+                in_container: false
+            - check: presence — crictl info serves the nvidia handler, the device lists, and a rootful CDI injection runs nvidia-smi -L
+              id: nvidia-cdi-present-rootful
+              context:
+                - runtime
+              timeout: 900s
+              exit_status: 0
+              stdout:
+                - contains: CDI-PRESENT-ROOTFUL
+              command:
+                command: |
+                  set -eu
+                  d=/tmp/nvidia-cdi-bed
+                  sudo -n containerd --config "$d/config.toml" --address "$d/containerd.sock" --log-level error >"$d/daemon.log" 2>&1 &
+                  echo $! > "$d/pid"
+                  trap 'sudo -n kill "$(cat "$d/pid")" 2>/dev/null || true' EXIT
+                  ready=0
+                  for i in $(seq 1 100); do
+                    if sudo -n crictl --runtime-endpoint "unix://$d/containerd.sock" --image-endpoint "unix://$d/containerd.sock" info > "$d/info-after.json" 2>/dev/null; then ready=1; break; fi
+                    sleep 0.1
+                  done
+                  [ "$ready" = 1 ] || { echo "scratch containerd did not become ready" >&2; cat "$d/daemon.log" >&2; exit 1; }
+                  grep -q '"nvidia"' "$d/info-after.json"
+                  nvidia-ctk cdi list > "$d/list-after.txt" 2>&1
+                  grep -q 'nvidia.com/gpu=all' "$d/list-after.txt"
+                  out=$(sudo -n nerdctl --address "$d/containerd.sock" --namespace default run --rm --device nvidia.com/gpu=all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi -L 2>&1)
+                  printf '%s\n' "$out"
+                  printf '%s\n' "$out" | grep -q 'NVIDIA GeForce'
+                  sudo -n kill "$(cat "$d/pid")" || true
+                  echo CDI-PRESENT-ROOTFUL
+                in_container: false
+            - check: presence — the rootless client resolves the linked refreshed spec and a rootless CDI injection runs nvidia-smi -L
+              id: nvidia-cdi-present-rootless
+              context:
+                - runtime
+              timeout: 900s
+              exit_status: 0
+              stdout:
+                - contains: CDI-PRESENT-ROOTLESS
+              command:
+                command: |
+                  set -eu
+                  d=/tmp/nvidia-cdi-bed-rootless
+                  rm -rf "$d"
+                  mkdir -p "$d/xdg" "$d/home/.config/cdi"
+                  chmod 700 "$d/xdg"
+                  ln -sfn /var/run/cdi/nvidia.yaml "$d/home/.config/cdi/nvidia.yaml"
+                  test "$(readlink "$d/home/.config/cdi/nvidia.yaml")" = /var/run/cdi/nvidia.yaml
+                  XDG_RUNTIME_DIR="$d/xdg" HOME="$d/home" containerd-rootless.sh --root "$d/root" --state "$d/state" --address "$d/containerd.sock" --log-level error >"$d/daemon.log" 2>&1 &
+                  echo $! > "$d/pid"
+                  trap 'kill "$(cat "$d/pid")" 2>/dev/null || true' EXIT
+                  ready=0
+                  for i in $(seq 1 200); do
+                    if XDG_RUNTIME_DIR="$d/xdg" HOME="$d/home" nerdctl --address "$d/containerd.sock" info >/dev/null 2>&1; then ready=1; break; fi
+                    sleep 0.1
+                  done
+                  [ "$ready" = 1 ] || { echo "scratch rootless containerd did not become ready" >&2; cat "$d/daemon.log" >&2; exit 1; }
+                  out=$(XDG_RUNTIME_DIR="$d/xdg" HOME="$d/home" nerdctl --address "$d/containerd.sock" --namespace default run --rm --device nvidia.com/gpu=all nvidia/cuda:12.6.0-base-ubuntu24.04 nvidia-smi -L 2>&1)
+                  printf '%s\n' "$out"
+                  printf '%s\n' "$out" | grep -q 'NVIDIA GeForce'
+                  kill "$(cat "$d/pid")" || true
+                  echo CDI-PRESENT-ROOTLESS
+                in_container: false
+            - check: presence — the deployed host serves the handler, has the refresh units enabled, and links the refreshed spec for its user
+              id: nvidia-cdi-deployed
+              context:
+                - runtime
+              timeout: 300s
+              exit_status: 0
+              stdout:
+                - contains: CDI-DEPLOYED-OK
+              command:
+                command: |
+                  set -eu
+                  # The already-running host daemon must serve the handler — a written
+                  # drop-in is not enough (a drop-in written while a scratch daemon ran
+                  # stayed unserved until the daemon restarted).
+                  sudo -n crictl --runtime-endpoint unix:///run/containerd/containerd.sock --image-endpoint unix:///run/containerd/containerd.sock info > /tmp/nvidia-cdi-deployed-info.json
+                  grep -q '"nvidia"' /tmp/nvidia-cdi-deployed-info.json
+                  grep -q 'runtimes\.nvidia' /etc/containerd/conf.d/99-nvidia.toml
+                  grep -Fq '/etc/containerd/conf.d/*.toml' /etc/containerd/config.toml
+                  test -L /etc/systemd/system/multi-user.target.wants/nvidia-cdi-refresh.path
+                  test -L /etc/systemd/system/multi-user.target.wants/nvidia-cdi-refresh.service
+                  grep -Fq 'L+ %h/.config/cdi/nvidia.yaml - - - - /var/run/cdi/nvidia.yaml' /etc/user-tmpfiles.d/nvidia-cdi.conf
+                  uid=$(getent passwd 1000 >/dev/null 2>&1 && echo 1000 || true)
+                  if [ -z "$uid" ]; then
+                    uid=$(awk -F: '$3>=1000 && $3<65534 {print $3; exit}' /etc/passwd)
+                  fi
+                  if [ -n "$uid" ]; then
+                    sudo -n /usr/local/bin/nvidia-cdi-rootless-link check "$uid"
+                  fi
+                  echo CDI-DEPLOYED-OK
+                in_container: false
+
 nvidia-skill:
     skill:
         name: nvidia

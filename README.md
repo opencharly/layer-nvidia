@@ -53,11 +53,41 @@ Vulkan ICD directory) into the image, so it is verifiable without a physical
 GPU. A GPU-accelerated box pairs it with `cuda` (CUDA toolkit, cuDNN) — for
 example `python-ml`, `jupyter`, `ollama`, and `comfyui`.
 
+## CDI host layer
+
+`nvidia-cdi-host` is the host-side companion: it composes `nvidia` and configures
+a host's containerd for CDI. It runs `nvidia-ctk runtime configure
+--runtime=containerd` with a layer-owned drop-in
+(`/etc/containerd/conf.d/99-nvidia.toml`), without `--enable-cdi` (ignored on
+containerd 2.x) and without `--set-as-default`, and fails closed if the handler
+or the config `imports` entry does not land. It then **restarts containerd** —
+containerd reads its config at startup, so a written drop-in is not a live
+handler. It enables **and starts** the toolkit's `nvidia-cdi-refresh.path` /
+`.service` so `/var/run/cdi/nvidia.yaml` is regenerated rather than snapshotted
+and exists on a fresh host, and links that refreshed file into the rootless
+client's spec dir: the user's `$XDG_CONFIG_HOME/cdi` (default `~/.config/cdi`),
+resolved by the layer's link helper. A `user-tmpfiles.d` rule covers a user that
+does not exist at build time, at the client default `%h/.config` (systemd-tmpfiles
+has no `XDG_CONFIG_HOME` specifier).
+
+The checks gate on the device, not an exit code: `nvidia-ctk cdi list` exits 0 on
+an invalid spec, so the layer asserts that `crictl info` serves the `nvidia`
+handler, the list reports `nvidia.com/gpu=all`, and a
+`--device nvidia.com/gpu=all` container runs `nvidia-smi -L`. The
+`check-nvidia-cdi-host` bed carries that sequence rootful and rootless; on a host
+without the GPU it skips visibly with `prereq-gpu-skipped`. Its data-producing
+steps were executed individually against scratch daemons on an RTX 4080 SUPER
+host; a full `charly check run` on a **disposable** GPU host is the remaining
+gate and is not yet recorded.
+
+Arch/omarchy only: the Fedora arm is additive and is not claimed until its own
+disposable bed exists.
+
 ## Layout
 
 - `charly.yml` — the candy manifest: the multi-distro package arms, the
   `LD_LIBRARY_PATH` environment, the Vulkan ICD wiring `plan:`, the `plan:`
-  checks, and the embedded `skill:` entity.
+  checks, the CDI host layer and its GPU bed, and the embedded `skill:` entity.
 - `CHANGELOG/` — per-CalVer release notes.
 - `.github/workflows/tag-on-merge.yml` — CalVer tag + `CHANGELOG/` on merge.
 - `README.md` — this user overview.
