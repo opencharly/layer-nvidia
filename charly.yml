@@ -225,7 +225,7 @@ nvidia:
                 file: /etc/vulkan/icd.d
                 exists: true
                 filetype: directory
-            - check: the NVIDIA runtime asset THIS distro provides is present, and the host-coupled driver libraries are not
+            - check: the NVIDIA runtime asset THIS distro provides is present (Vulkan ICD JSON on Arch, VA-API driver on Fedora)
               id: nvidia-distro-runtime-assets
               exit_status: 0
               command: |
@@ -265,6 +265,11 @@ nvidia:
                   fi
                   echo "arch: Vulkan ICD JSON present ($found)"
                 fi
+                # SCOPE: this step asserts PRESENCE of the distro asset only. The ABSENCE of
+                # the host-coupled driver libraries is asserted by the strip step's own
+                # build-time count, not here -- at run time CDI injects the host's libs at the
+                # same paths, so absence is not observable from inside a GPU-enabled container
+                # (see the strip step's comment).
                 # nvidia-smi is a convenience binary the image keeps (CDI injects its own at
                 # run time); reported, not required, because the Fedora arm does not ship it.
                 command -v nvidia-smi >/dev/null 2>&1 && echo "nvidia-smi present" || echo "nvidia-smi absent (injected by CDI at run time)"

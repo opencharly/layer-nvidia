@@ -73,9 +73,12 @@ covers files AND symlinks, because the failure this replaced WAS a symlink
 The separate check that survived is `nvidia-distro-runtime-assets`, rewritten in the same
 change: the old form asserted that the driver libraries were present (it listed
 `/usr/lib/libnvidia*` and required `nvidia` in the output), which is the contract violation
-itself, and it went red on a correct image the moment the strip landed. It now asserts the
-distro's own asset strictly — the Vulkan ICD JSON on Arch, the VA-API driver on Fedora —
-rather than accepting any one of a set. The ICD step above it had the matching defect in
+itself, and it went red on a correct image the moment the strip landed. It now asserts
+PRESENCE of the distro's own asset — the Vulkan ICD JSON on Arch, the VA-API driver on
+Fedora — rather than accepting any one of a set. It deliberately does not assert the ABSENCE
+of the driver libraries: at run time CDI injects the host's copies at the same paths, so
+absence is only observable in the build container, which is where the strip's own count
+asserts it. The ICD step above it had the matching defect in
 the other direction: it tested only Fedora's `nvidia_icd.x86_64.json` filename, so on
 Arch/CachyOS (which ship `nvidia_icd.json`) it silently wired nothing; it now accepts
 either name and says which one it linked.
