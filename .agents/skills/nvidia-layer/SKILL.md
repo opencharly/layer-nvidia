@@ -26,8 +26,64 @@ NVIDIA runtime candy providing `nvidia-container-toolkit` for CDI device injecti
 - `libva-nvidia-driver` — VA-API hardware video acceleration
 
 **PAC** (Arch Linux):
-- `nvidia-utils` — NVIDIA GL/Vulkan userspace, `nvidia-smi`
+- `nvidia-utils` — installed for its NON-driver assets (the Vulkan ICD JSON this
+  candy wires, and `nvidia-smi`); the host-coupled driver libraries it also carries
+  are removed by a plan step — see "Driver user-space is not bundled" below
 - `nvidia-container-toolkit` — `nvidia-ctk` CLI for CDI spec generation
+
+### Driver user-space is not bundled — and on Arch that is now ENFORCED
+
+The contract at the top of this page is not a description, it is a rule: the image
+carries no driver user-space, because the kernel-module-coupled part of it MUST come
+from the host. The Fedora arm satisfies it by construction (`libva-nvidia-driver`
+ships no driver libraries). The Arch arm did not, and the failure is subtle enough
+to be worth recording.
+
+`nvidia-utils` installs the whole driver user-space (~89 files under `/usr/lib`:
+`libnvidia-ml`, `libcuda`, `libnvidia-glcore`, the EGL/GLX/GLES entry points, …).
+NVIDIA's CDI `create-symlinks` hook then points each SONAME at the **newest**
+versioned copy present *inside the container* — so the image's copy wins over the
+one the mount injected. On a host whose kernel driver is older than the distro's
+package, NVML then talks to a module it does not match:
+
+```
+$ nvidia-smi -L                      # inside a cachyos ollama image, host driver 615.78.08
+Failed to initialize NVML: Driver/library version mismatch
+NVML library version: 620.70
+$ ls -l /usr/lib/libnvidia-ml.so*
+/usr/lib/libnvidia-ml.so.1 -> libnvidia-ml.so.620.70.06      # baked by nvidia-utils
+/usr/lib/libnvidia-ml.so.615.78.08                           # injected by CDI
+```
+
+CUDA kept working (the injected `libcuda` is what runs), so the breakage is confined
+to NVML: `nvidia-smi`, and every Vulkan/EGL consumer on a skewed host.
+
+One plan step holds the rule now. `nvidia-drop-driver-userspace` removes exactly the set
+the CDI spec injects (keeping the Vulkan ICD and `nvidia-smi`) and asserts the result in
+the SAME `run:` — it prints how many driver libraries are still present and fails the
+build if the count is not zero. That step executes in the BUILD container, where no CDI
+has injected anything, so a remaining match is unambiguously image content; the enforcement
+is deliberately not a separate `check:` step, because a check runs in a container the GPU
+seam may attach, where the host's libs sit at the same paths and only
+`/proc/self/mountinfo` could tell them apart — and that is not readable on every venue (a
+mount-info probe went red on a CORRECT fedora image for exactly that reason). The count
+covers files AND symlinks, because the failure this replaced WAS a symlink
+(`libnvidia-ml.so.1 -> libnvidia-ml.so.620.70.06`).
+
+The separate check that survived is `nvidia-distro-runtime-assets`, rewritten in the same
+change: the old form asserted that the driver libraries were present (it listed
+`/usr/lib/libnvidia*` and required `nvidia` in the output), which is the contract violation
+itself, and it went red on a correct image the moment the strip landed. It now asserts
+PRESENCE of the distro's own asset — the Vulkan ICD JSON on Arch, the VA-API driver on
+Fedora — rather than accepting any one of a set. It deliberately does not assert the ABSENCE
+of the driver libraries: at run time CDI injects the host's copies at the same paths, so
+absence is only observable in the build container, which is where the strip's own count
+asserts it. The ICD step above it had the matching defect in
+the other direction: it tested only Fedora's `nvidia_icd.x86_64.json` filename, so on
+Arch/CachyOS (which ship `nvidia_icd.json`) it silently wired nothing; it now accepts
+either name and says which one it linked.
+Nothing in the library links against a driver stub at build time, so no consumer loses
+a build capability.
 
 ## Environment Variables
 
