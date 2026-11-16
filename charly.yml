@@ -70,6 +70,72 @@ nvidia:
                   ln -sf /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json /etc/vulkan/icd.d/nvidia_icd.json || true
                 [ -f /usr/share/vulkan/implicit_layer.d/nvidia_layers.json ] && \
                   ln -sf /usr/share/vulkan/implicit_layer.d/nvidia_layers.json /etc/vulkan/icd.d/nvidia_layers.json || true
+
+            # ── THE DOCUMENTED CONTRACT, ENFORCED ON THE ARCH ARMS ──────────────
+            # This candy's own skill states the rule: "Driver userspace libraries
+            # (libcuda, libnvidia-ml, etc.) are NOT bundled -- CDI provides
+            # host-matching driver libs at runtime, preventing version mismatches
+            # between container and host kernel module." The FEDORA arm obeys it
+            # (libva-nvidia-driver ships no driver libs). The ARCH arm did not:
+            # `nvidia-utils` installs the whole driver user-space (89 files under
+            # /usr/lib), and NVIDIA's CDI `create-symlinks` hook points each SONAME at
+            # the NEWEST versioned copy present INSIDE the container -- so the image's
+            # copy beat the injected host copy. Measured on a cachyos ollama image
+            # against a 615.78.08 host:
+            #   /usr/lib/libnvidia-ml.so.1 -> libnvidia-ml.so.620.70.06     (image)
+            #   /usr/lib/libnvidia-ml.so.615.78.08                          (CDI mount)
+            #   $ nvidia-smi -L
+            #   Failed to initialize NVML: Driver/library version mismatch
+            #   NVML library version: 620.70                                (exit 18)
+            # CUDA still ran -- the injected libcuda is fine -- so the failure surfaces
+            # only in NVML, i.e. `nvidia-smi` and every Vulkan/EGL consumer, on a host
+            # whose kernel driver is older than the distro's package.
+            #
+            # The package STAYS installed: it also owns assets that are NOT
+            # host-coupled and that this candy actually uses -- the Vulkan ICD JSON the
+            # step above wires, and the nvidia-smi binary (which CDI also injects).
+            # Only the host-coupled driver user-space is removed, which is what makes
+            # the skill's sentence true on both arms.
+            - run: drop the host-coupled driver user-space nvidia-utils ships, so the CDI mount is its ONLY provider
+              id: nvidia-drop-driver-userspace
+              run_as: root
+              command: |
+                set -eu
+                # Patterns == the libs the NVIDIA CDI spec injects (its own /usr/lib
+                # containerPaths): everything matching is host-coupled by definition.
+                # A symlinked /usr/lib64 (Arch) is skipped so nothing is counted or
+                # deleted twice.
+                removed=0
+                for d in /usr/lib /usr/lib64; do
+                  if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
+                  out=$(find "$d" -maxdepth 1 \( -name 'libnvidia-*.so*' -o -name 'libcuda*.so*' \
+                        -o -name 'libnvcuvid.so*' -o -name 'libnvoptix.so*' -o -name 'libGLX_nvidia.so*' \
+                        -o -name 'libEGL_nvidia.so*' -o -name 'libGLESv1_CM_nvidia.so*' \
+                        -o -name 'libGLESv2_nvidia.so*' \) -print -delete 2>/dev/null || true)
+                  n=$(printf '%s\n' "$out" | grep -c . || true)
+                  removed=$((removed + n))
+                done
+                rm -rf /usr/lib/nvidia /usr/lib/vdpau /usr/lib/xorg/modules/drivers/nvidia_drv.so
+                echo "dropped $removed driver library file(s) plus the xorg/vdpau driver trees"
+                # THE ENFORCEMENT, and it lives HERE rather than in a `check:` step on
+                # purpose. This RUN executes in the build container, where no CDI has
+                # injected anything -- so every match below IS image content, with no
+                # ambiguity. A `check:` step runs in a container the GPU seam may attach,
+                # where the host's identical-version libs sit at the same paths, and the
+                # only way to tell them apart from baked ones is /proc/self/mountinfo --
+                # which is not readable on every venue (measured: the probe went red on a
+                # CORRECT fedora image for exactly that reason). A control that has to
+                # guess is worse than a control that cannot be fooled.
+                left=$(find /usr/lib /usr/lib64 -maxdepth 1 -type f \
+                    \( -name 'libnvidia-*.so*' -o -name 'libcuda*.so*' -o -name 'libnvcuvid.so*' \
+                    -o -name 'libnvoptix.so*' -o -name 'libGLX_nvidia.so*' -o -name 'libEGL_nvidia.so*' \
+                    -o -name 'libGLESv1_CM_nvidia.so*' -o -name 'libGLESv2_nvidia.so*' \) 2>/dev/null | wc -l)
+                echo "driver library files still baked after the strip: $left"
+                if [ "$left" -ne 0 ]; then
+                  find /usr/lib /usr/lib64 -maxdepth 1 -type f -name 'libnvidia-*.so*' 2>/dev/null | head -5
+                  echo "a LATER layer re-introduced a host-coupled driver library; strip it in that candy's own plan too"
+                  exit 1
+                fi
             # THE coverage for the gpgcheck fix, and it reads the one observable that
             # DISCRIMINATES. Two wrong candidates, both ruled out by experiment:
             #   - "the signing key is in the rpmdb" does NOT discriminate — the previous
@@ -141,11 +207,41 @@ nvidia:
                 file: /etc/vulkan/icd.d
                 exists: true
                 filetype: directory
-            - check: the nvidia userspace for THIS distro is present, either the Arch driver libs from nvidia-utils or the Fedora VA-API driver from libva-nvidia-driver
+            - check: the NVIDIA runtime assets this candy legitimately provides are present for the composed distro
+              id: nvidia-distro-runtime-assets
               exit_status: 0
-              stdout:
-                - contains: nvidia
-              command: ls -d /usr/lib64/nvidia /usr/lib/nvidia /usr/lib64/libnvidia* /usr/lib/libnvidia* /usr/lib64/dri/nvidia_drv_video.so /usr/lib/dri/nvidia_drv_video.so 2>/dev/null || true
+              command: |
+                set -eu
+                # Rewritten WITH the driver-user-space strip, because the old form of this
+                # check asserted the very thing the contract forbids. It ran
+                #   ls -d /usr/lib64/nvidia /usr/lib/nvidia /usr/lib64/libnvidia* /usr/lib/libnvidia* ...
+                # and required "nvidia" in the output -- i.e. it demanded that the
+                # host-coupled driver libraries BE baked into the image. Once the strip
+                # landed it went red on a correct image:
+                #   stdout: expected to contain "nvidia" (got: )
+                # (measured on check-cachyos-ollama-pod, plan:candy:...:8).
+                #
+                # What is true, and what a composed image must have:
+                #   * Arch/CachyOS -- the Vulkan ICD JSON the wiring step above links;
+                #   * Fedora       -- the VA-API driver from libva-nvidia-driver;
+                #   * both         -- the nvidia-smi binary.
+                # The driver libraries are NOT in this list: they are removed here and
+                # injected by CDI at run time, and the strip step's own build-time
+                # assertion is what holds that half.
+                ok=0
+                if [ -f /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json ]; then
+                  echo "arch/cachyos: Vulkan ICD JSON present"
+                  ok=1
+                fi
+                if [ -f /usr/lib64/dri/nvidia_drv_video.so ] || [ -f /usr/lib/dri/nvidia_drv_video.so ]; then
+                  echo "fedora: VA-API driver present"
+                  ok=1
+                fi
+                if command -v nvidia-smi >/dev/null 2>&1; then
+                  echo "nvidia-smi present"
+                  ok=1
+                fi
+                test "$ok" -eq 1
 
 nvidia-cdi-host:
     candy:
