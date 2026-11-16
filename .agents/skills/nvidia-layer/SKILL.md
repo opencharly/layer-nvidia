@@ -56,17 +56,26 @@ $ ls -l /usr/lib/libnvidia-ml.so*
 ```
 
 CUDA kept working (the injected `libcuda` is what runs), so the breakage is confined
-to NVML: `nvidia-smi`, and every Vulkan/EGL consumer on a skewed host. Two plan
-steps hold the rule now — `nvidia-drop-driver-userspace` removes exactly the set the
-CDI spec injects (keeping the Vulkan ICD and `nvidia-smi`), and
-`nvidia-driver-libs-match-kernel-module` fails the build if any copy would shadow them. The enforcement lives in the
-strip step itself, and the reason is a measured one: that step runs in the BUILD
-container, where no CDI has injected anything, so every remaining driver library is
-unambiguously image content. A `check:` step runs in a container the GPU seam may attach,
-where the host's libs sit at the same paths and only `/proc/self/mountinfo` can tell them
-apart — and that is not readable on every venue (a mount-info probe went red on a CORRECT
-fedora image for exactly that reason). So the strip asserts `0` remaining and fails the
-build otherwise, naming the candy whose later layer re-introduced one.
+to NVML: `nvidia-smi`, and every Vulkan/EGL consumer on a skewed host.
+
+One plan step holds the rule now. `nvidia-drop-driver-userspace` removes exactly the set
+the CDI spec injects (keeping the Vulkan ICD and `nvidia-smi`) and asserts the result in
+the SAME `run:` — it prints how many driver libraries are still present and fails the
+build if the count is not zero. That step executes in the BUILD container, where no CDI
+has injected anything, so a remaining match is unambiguously image content; the enforcement
+is deliberately not a separate `check:` step, because a check runs in a container the GPU
+seam may attach, where the host's libs sit at the same paths and only
+`/proc/self/mountinfo` could tell them apart — and that is not readable on every venue (a
+mount-info probe went red on a CORRECT fedora image for exactly that reason). The count
+covers files AND symlinks, because the failure this replaced WAS a symlink
+(`libnvidia-ml.so.1 -> libnvidia-ml.so.620.70.06`).
+
+The separate check that survived is `nvidia-distro-runtime-assets`, rewritten in the same
+change: the old form asserted that the driver libraries were present (it listed
+`/usr/lib/libnvidia*` and required `nvidia` in the output), which is the contract violation
+itself, and it went red on a correct image the moment the strip landed. It now asserts the
+distro's own asset strictly — the Vulkan ICD JSON on Arch, the VA-API driver on Fedora —
+rather than accepting any one of a set.
 Nothing in the library links against a driver stub at build time, so no consumer loses
 a build capability.
 
