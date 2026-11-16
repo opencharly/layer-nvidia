@@ -66,10 +66,24 @@ nvidia:
                   ln -sf /usr/share/vulkan/implicit_layer.d/nvidia_layers.json /etc/vulkan/icd.d/nvidia_layers.json || true
               run_as: root
               command: |
-                [ -f /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json ] && \
-                  ln -sf /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json /etc/vulkan/icd.d/nvidia_icd.json || true
+                # BOTH filenames: Arch/CachyOS ship /usr/share/vulkan/icd.d/nvidia_icd.json,
+                # Fedora's package ships nvidia_icd.x86_64.json. Testing only the Fedora
+                # name made this step a silent no-op on Arch -- measured on a cachyos image:
+                # `ls /usr/share/vulkan/icd.d/` -> nvidia_icd.json, and /etc/vulkan/icd.d/
+                # carried no image-side link.
+                icd=
+                for c in /usr/share/vulkan/icd.d/nvidia_icd.json /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json; do
+                  if [ -f "$c" ]; then icd="$c"; break; fi
+                done
+                if [ -n "$icd" ]; then
+                  ln -sf "$icd" /etc/vulkan/icd.d/nvidia_icd.json
+                  echo "wired Vulkan ICD: $icd"
+                else
+                  echo "no Vulkan ICD JSON in the package set for this distro"
+                fi
                 [ -f /usr/share/vulkan/implicit_layer.d/nvidia_layers.json ] && \
                   ln -sf /usr/share/vulkan/implicit_layer.d/nvidia_layers.json /etc/vulkan/icd.d/nvidia_layers.json || true
+                true
 
             # ── THE DOCUMENTED CONTRACT, ENFORCED ON THE ARCH ARMS ──────────────
             # This candy's own skill states the rule: "Driver userspace libraries
@@ -238,11 +252,18 @@ nvidia:
                   fi
                   echo "fedora: VA-API driver present"
                 else
-                  if [ ! -f /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json ]; then
+                  # Arch/CachyOS ship nvidia_icd.json; Fedora's package the .x86_64 name.
+                  # A glob over both is the assertion; naming only one made this check fail
+                  # on a correct cachyos image (measured).
+                  found=
+                  for c in /usr/share/vulkan/icd.d/nvidia_icd.json /usr/share/vulkan/icd.d/nvidia_icd.x86_64.json; do
+                    if [ -f "$c" ]; then found="$c"; fi
+                  done
+                  if [ -z "$found" ]; then
                     echo "arch: the Vulkan ICD JSON is MISSING"
                     exit 1
                   fi
-                  echo "arch: Vulkan ICD JSON present"
+                  echo "arch: Vulkan ICD JSON present ($found)"
                 fi
                 # nvidia-smi is a convenience binary the image keeps (CDI injects its own at
                 # run time); reported, not required, because the Fedora arm does not ship it.

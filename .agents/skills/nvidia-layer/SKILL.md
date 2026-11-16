@@ -75,7 +75,10 @@ change: the old form asserted that the driver libraries were present (it listed
 `/usr/lib/libnvidia*` and required `nvidia` in the output), which is the contract violation
 itself, and it went red on a correct image the moment the strip landed. It now asserts the
 distro's own asset strictly — the Vulkan ICD JSON on Arch, the VA-API driver on Fedora —
-rather than accepting any one of a set.
+rather than accepting any one of a set. The ICD step above it had the matching defect in
+the other direction: it tested only Fedora's `nvidia_icd.x86_64.json` filename, so on
+Arch/CachyOS (which ship `nvidia_icd.json`) it silently wired nothing; it now accepts
+either name and says which one it linked.
 Nothing in the library links against a driver stub at build time, so no consumer loses
 a build capability.
 
