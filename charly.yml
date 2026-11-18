@@ -77,7 +77,7 @@ nvidia:
             #   $ ls -l /usr/bin/nvidia-ctk
             #   -rwxr-xr-x 1 root root 13466568 … /usr/bin/nvidia-ctk
             - run: install nvidia-ctk from the Arch extra repo
-              command: pacman -S --noconfirm --needed extra/nvidia-container-toolkit
+              command: pacman -Sy --noconfirm extra/nvidia-container-toolkit
               run_as: root
             - run: mkdir=/etc/vulkan/icd.d
               mkdir: /etc/vulkan/icd.d
