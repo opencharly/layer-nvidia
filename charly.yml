@@ -16,17 +16,9 @@ nvidia:
             Every effect — the package, the nvidia-ctk binary, the exported path,
             and the ICD directory — is a real artifact baked into the image, so
             each is directly verifiable without a physical GPU.
-        package:
-            # Repo-qualified on purpose. Two builds of the same version are visible in a
-            # CachyOS image, and pacman takes the higher-priority repo:
-            #
-            #   cachyos-extra-v3/nvidia-container-toolkit 1.20.1-1.1   <- wins
-            #   extra/nvidia-container-toolkit            1.20.1-1
-            #
-            # The cachyos-extra-v3 build ships NO /usr/bin/nvidia-ctk, which is the binary
-            # the check below asserts and the one any CDI-generating unit needs. Naming
-            # extra/ installs Arch's build, which does ship it.
-            - extra/nvidia-container-toolkit
+            # The CachyOS build of this package omits /usr/bin/nvidia-ctk; the plan step
+            # below installs Arch's build on top, which ships it.
+            - nvidia-container-toolkit
         distro:
             arch:
                 package:
@@ -65,6 +57,27 @@ nvidia:
         env:
             LD_LIBRARY_PATH: "/usr/lib64"
         plan:
+            # A package: entry cannot select a repo -- charly renders the bare name and
+            # pacman takes the highest-priority one, which on CachyOS is
+            # cachyos-extra-v3/nvidia-container-toolkit 1.20.1-1.1. That build ships
+            # nvidia-cdi-hook and nvidia-container-runtime* but NO /usr/bin/nvidia-ctk,
+            # so the check at the end of this plan ("the nvidia-ctk CLI binary lands on
+            # the canonical /usr/bin path") has always been red, hidden behind
+            # skipped_checks in every bed that never reached it.
+            #
+            # Naming the repo here is the only way to get Arch's build of the same
+            # version, which does carry the binary:
+            #
+            #   $ pacman -Ql nvidia-container-toolkit | grep /bin/     (1.20.1-1.1)
+            #   nvidia-cdi-hook, nvidia-container-runtime{,-hook,.cdi,.legacy}
+            #   $ ls /usr/bin/*ctk*
+            #   none
+            #   $ pacman -Sy extra/nvidia-container-toolkit
+            #   $ ls -l /usr/bin/nvidia-ctk
+            #   -rwxr-xr-x 1 root root 13466568 … /usr/bin/nvidia-ctk
+            - run: pacman -S --noconfirm --needed extra/nvidia-container-toolkit
+              command: pacman -S --noconfirm --needed extra/nvidia-container-toolkit
+              run_as: root
             - run: mkdir=/etc/vulkan/icd.d
               mkdir: /etc/vulkan/icd.d
               run_as: root
