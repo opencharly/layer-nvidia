@@ -18,6 +18,7 @@ nvidia:
             each is directly verifiable without a physical GPU.
             # The CachyOS build of this package omits /usr/bin/nvidia-ctk; the plan step
             # below installs Arch's build on top, which ships it.
+        package:
             - nvidia-container-toolkit
         distro:
             arch:
