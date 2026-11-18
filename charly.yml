@@ -17,7 +17,16 @@ nvidia:
             and the ICD directory — is a real artifact baked into the image, so
             each is directly verifiable without a physical GPU.
         package:
-            - nvidia-container-toolkit
+            # Repo-qualified on purpose. Two builds of the same version are visible in a
+            # CachyOS image, and pacman takes the higher-priority repo:
+            #
+            #   cachyos-extra-v3/nvidia-container-toolkit 1.20.1-1.1   <- wins
+            #   extra/nvidia-container-toolkit            1.20.1-1
+            #
+            # The cachyos-extra-v3 build ships NO /usr/bin/nvidia-ctk, which is the binary
+            # the check below asserts and the one any CDI-generating unit needs. Naming
+            # extra/ installs Arch's build, which does ship it.
+            - extra/nvidia-container-toolkit
         distro:
             arch:
                 package:
