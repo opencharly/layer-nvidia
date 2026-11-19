@@ -1,7 +1,7 @@
 ---
 name: nvidia-layer
-description: 'NVIDIA GPU runtime support: driver libs, nvidia-container-toolkit (CDI),
-  and VA-API.
+description: 'NVIDIA GPU runtime support: nvidia-container-toolkit (CDI), the Vulkan
+  ICD, and VA-API; the host driver libs are injected at run time, never baked.
 
   Fedora (negativo17) and Arch Linux (pac). Base candy for all GPU-accelerated boxes.
 
@@ -61,7 +61,24 @@ to NVML: `nvidia-smi`, and every Vulkan/EGL consumer on a skewed host.
 One plan step holds the rule now. `nvidia-drop-driver-userspace` removes exactly the set
 the CDI spec injects (keeping the Vulkan ICD and `nvidia-smi`) and asserts the result in
 the SAME `run:` — it prints how many driver libraries are still present and fails the
-build if the count is not zero. That step executes in the BUILD container, where no CDI
+build if the count is not zero. Its predicate is ANCHORED: `libcuda.so*` plus an explicit
+`libcudadebugger.so*`, never the `libcuda*` PREFIX. The prefix family also contains the CUDA
+RUNTIME (`libcudart.so*`, `libcudart_static.a`, `libcudadevrt.a`), so a prefix glob deletes
+what `layer-cuda` stitches whenever this layer is applied after that stitch — measured on a
+pod image, where `/usr/lib/libcudart.so*` vanished and `layer-cuda`'s own cudart check went
+red (opencharly/layer-nvidia#25). The five-line block is byte-identical to
+`cuda-drop-driver-userspace`'s in `opencharly/layer-cuda` (tag `v2026.323.0138`); `diff` of
+the two `drv=` blocks is the drift control, and both files name it.
+
+The step also asserts what it KEEPS: a pre-strip baseline of every `*.so*` AND `*.a` in the
+image, and a build failure naming any CUDA runtime/compute library that disappeared. The
+residue count alone cannot tell the two families apart — that is how the runtime came to be
+deleted while every build-time control stayed green. Both the library loop and the
+`nvidia`/`vdpau`/`xorg` tree removals walk every lib layout that exists (`/usr/lib{,32,64}`),
+because a real (non-symlinked) `/usr/lib64` on Fedora and the multilib `/usr/lib32` would
+otherwise keep a baked driver tree while the strip reported success.
+
+That step executes in the BUILD container, where no CDI
 has injected anything, so a remaining match is unambiguously image content; the enforcement
 is deliberately not a separate `check:` step, because a check runs in a container the GPU
 seam may attach, where the host's libs sit at the same paths and only
