@@ -31,9 +31,15 @@ Canonical files:
   `validate / validate`, defined in `opencharly/.github`); this repo has no
   per-repo candy gate.
 - The candy's `plan:` `check:` steps are the functional evidence; they must stay
-  valid on every distro arm they run on. Where a check only applies to one
-  distro family (e.g. a Fedora-only DNF path), scope it in the command itself —
-  the check runner does not honour runner-level `exclude-distro` fields.
+  valid on every distro arm they run on. A `check:` step may declare
+  `exclude_distro:`: the check runner honours it (`RunOne` in
+  `sdk/kit/planrun.go`) and skips the step when any of the IMAGE's distro TAGS
+  intersects the list; the box and live gathers seed those tags from the image
+  metadata. It filters on distro tags, never on TOOLING — so when the reason a
+  check cannot hold is the tool (there is no DNF here), scope the guard in the
+  command, as `nvidia-container-toolkit-gpgcheck-enforced` does. The BUILD
+  emitter does not read the field: a `run:` install step's `exclude_distro:` is
+  inert at image-build time.
 
 ## Modify this repo
 
