@@ -302,7 +302,14 @@ nvidia:
             # Revert `gpgcheck: true` above (or the template's `true` arm) and it fails.
             - check: the nvidia-container-toolkit repo enforces package signature verification, so its packages cannot install unverified
               id: nvidia-container-toolkit-gpgcheck-enforced
-              # Fedora-scoped, implemented IN THE COMMAND (runner-level exclude-distro is not honoured).
+              # Fedora-scoped, implemented IN THE COMMAND because the reason is the TOOL, not the
+              # distro name. The check runner DOES honour `exclude_distro:` -- `RunOne` skips a step
+              # when any of the IMAGE's distro tags intersects the list (sdk/kit/planrun.go:181-189),
+              # and the box/live gathers seed those tags from the image metadata. A tag list would
+              # have to enumerate every DNF-less derivative by hand (arch, cachyos, omarchy, ...), and
+              # a new one would silently run a Fedora assertion it cannot satisfy. So the guard asks
+              # the question this check actually means -- "is there DNF to assert against?" -- and the
+              # assertion still runs (and FAILS) on a DNF host whose override file is missing.
               #
               # The assertion used to live in a `stdout:` matcher while the Arch skip path merely exited
               # 0. On the Arch arm the command therefore succeeded, printed nothing, and the matcher still
