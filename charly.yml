@@ -188,9 +188,14 @@ nvidia:
                 # Fedora, and multilib adds /usr/lib32. A single hard-coded /usr/lib path
                 # therefore leaves the other trees baked while the strip reports success --
                 # measured on this host, /usr/lib32/vdpau carries
-                # libvdpau_nvidia.so.615.78.08. The same gap at the producer is filed as
-                # opencharly/layer-cuda#28.
-                libs="/usr/lib /usr/lib32 /usr/lib64"
+                # libvdpau_nvidia.so.615.78.08 (opencharly/layer-nvidia#28).
+                #
+                # ONE definition, walked by the baseline, the delete, the nvidia/vdpau/xorg
+                # tree removals and the residue re-check -- the same shape the producer
+                # (layer-cuda v2026.323.1604) ships. Overridable so the step can be
+                # EXECUTED against a fixture: that is how its discriminating power is
+                # proven without a GPU and without an image build.
+                libs=${NVIDIA_STRIP_LIB_DIRS:-/usr/lib /usr/lib32 /usr/lib64}
                 removed=0
                 # THE BASELINE. Snapshot every shared library AND static archive present
                 # BEFORE the strip; the survival assertion below judges the strip against it.
@@ -210,8 +215,8 @@ nvidia:
                 for d in $libs; do
                   if [ ! -d "$d" ]; then continue; fi
                   rm -rf "$d/nvidia" "$d/vdpau"
+                  rm -f "$d/xorg/modules/drivers/nvidia_drv.so"
                 done
-                rm -f /usr/lib/xorg/modules/drivers/nvidia_drv.so
                 echo "dropped $removed driver library file(s) plus the nvidia/vdpau/xorg driver trees"
 
                 # THE SURVIVAL ASSERTION -- the control this step was missing. It proved what
@@ -269,15 +274,15 @@ nvidia:
                       trees=$((trees + 1))
                     fi
                   done
+                  if [ -e "$d/xorg/modules/drivers/nvidia_drv.so" ]; then
+                    echo "DRIVER TREE STILL BAKED: $d/xorg/modules/drivers/nvidia_drv.so"
+                    trees=$((trees + 1))
+                  fi
                 done
-                if [ -e /usr/lib/xorg/modules/drivers/nvidia_drv.so ]; then
-                  echo "DRIVER TREE STILL BAKED: /usr/lib/xorg/modules/drivers/nvidia_drv.so"
-                  trees=$((trees + 1))
-                fi
                 echo "driver library files still baked after the strip: $left"
                 echo "driver trees still baked after the strip: $trees (must be 0)"
                 if [ "$left" -ne 0 ]; then
-                  find /usr/lib /usr/lib32 /usr/lib64 -maxdepth 1 -type f \( $drv \) 2>/dev/null | head -5
+                  find $libs -maxdepth 1 -type f \( $drv \) 2>/dev/null | head -5
                   echo "a LATER layer re-introduced a host-coupled driver library; strip it in that candy's own plan too"
                   exit 1
                 fi
