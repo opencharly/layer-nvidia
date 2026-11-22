@@ -11,8 +11,9 @@ nvidia:
             Installs nvidia-container-toolkit (the nvidia-ctk CLI that generates
             CDI device specs) and the distro's own non-host-coupled assets (the
             Vulkan ICD from nvidia-utils on Arch, libva-nvidia-driver on Fedora),
-            then removes the host-coupled driver user-space nvidia-utils ships, so
-            the CDI mount is its only provider. Exports
+            and leaves every driver file the distro package owns in place: a
+            POD never composes this layer (layer-cdi FAILS a build that bakes a
+            driver user-space), and a VM's guest owns its driver. Exports
             LD_LIBRARY_PATH=/usr/lib64 so the injected GPU driver libraries resolve,
             and prepares /etc/vulkan/icd.d to hold the nvidia Vulkan ICD symlinks.
             Every effect — the package, the nvidia-ctk binary, the exported path,
@@ -110,196 +111,6 @@ nvidia:
                   ln -sf /usr/share/vulkan/implicit_layer.d/nvidia_layers.json /etc/vulkan/icd.d/nvidia_layers.json || true
                 true
 
-            # ── THE DOCUMENTED CONTRACT, ENFORCED ON THE ARCH ARMS ──────────────
-            # This candy's own skill states the rule: "Driver userspace libraries
-            # (libcuda, libnvidia-ml, etc.) are NOT bundled -- CDI provides
-            # host-matching driver libs at runtime, preventing version mismatches
-            # between container and host kernel module." The FEDORA arm obeys it
-            # (libva-nvidia-driver ships no driver libs). The ARCH arm did not:
-            # `nvidia-utils` installs the whole driver user-space (89 files under
-            # /usr/lib), and NVIDIA's CDI `create-symlinks` hook points each SONAME at
-            # the NEWEST versioned copy present INSIDE the container -- so the image's
-            # copy beat the injected host copy. Measured on a cachyos ollama image
-            # against a 615.78.08 host:
-            #   /usr/lib/libnvidia-ml.so.1 -> libnvidia-ml.so.620.70.06     (image)
-            #   /usr/lib/libnvidia-ml.so.615.78.08                          (CDI mount)
-            #   $ nvidia-smi -L
-            #   Failed to initialize NVML: Driver/library version mismatch
-            #   NVML library version: 620.70                                (exit 18)
-            # CUDA still ran -- the injected libcuda is fine -- so the failure surfaces
-            # only in NVML, i.e. `nvidia-smi` and every Vulkan/EGL consumer, on a host
-            # whose kernel driver is older than the distro's package.
-            #
-            # The package STAYS installed: it also owns assets that are NOT
-            # host-coupled and that this candy actually uses -- the Vulkan ICD JSON the
-            # step above wires, and the nvidia-smi binary (which CDI also injects).
-            # Only the host-coupled driver user-space is removed, which is what makes
-            # the skill's sentence true on both arms.
-            - run: drop the host-coupled driver user-space nvidia-utils ships, so the CDI mount is its ONLY provider
-              id: nvidia-drop-driver-userspace
-              run_as: root
-              command: |
-                set -eu
-                # ── THE PATTERN SET IS THE DRIVER USER-SPACE, AND NOTHING ELSE ──────────
-                # Patterns == the libs the NVIDIA CDI spec injects (its own /usr/lib
-                # containerPaths): everything matching is host-coupled by definition.
-                #
-                # opencharly/layer-nvidia#25, Finding 2. The `libcuda` PREFIX family is not
-                # the driver's alone: `libcuda*` also matches the CUDA RUNTIME --
-                # libcudart.so{,.13,.13.5.37}, libcudart_static.a, libcudadevrt.a -- so the
-                # shipped glob `libcuda*.so*` deleted the runtime `layer-cuda` had just
-                # stitched into /opt/cuda and linked into /usr/lib. Measured on the image
-                # the check-comfyui-pod bed (2026.323.0203) runs against, where THIS layer
-                # is applied AFTER layer-cuda's stitch:
-                #   /opt/cuda/lib64/libcudart.so*          present   (the stitch SOURCE)
-                #   /usr/lib/libcudart_static.a            present   (no ".so" in the name)
-                #   /usr/lib/libcudart.so{,.13,.13.5.37}   GONE      (the discriminator)
-                # and layer-cuda's own `ls /usr/lib64/libcudart.so*` check then exited 2.
-                # The `.` anchors it: `libcuda.so*` is the driver and only the driver.
-                # `libcudadebugger.so*` is listed EXPLICITLY: it is driver user-space too
-                # (the CDI spec injects /usr/lib/libcudadebugger.so.<ver>) but it does not
-                # carry the `libcuda.so` stem, so anchoring alone would leave it baked.
-                #
-                # ── DRIFT CONTROL: ONE predicate, byte-identical to the producer's ─────
-                # The five lines from `set -f` through the closing quote are BYTE-IDENTICAL
-                # to `cuda-drop-driver-userspace`'s block in opencharly/layer-cuda at tag
-                # v2026.323.0138 (commit 7caeaf80c2e6d5457d407da2f7b97c5ee646ce63), copied
-                # rather than paraphrased: the two steps strip the same driver set from
-                # different points in the composition, so a predicate that drifts between
-                # them deletes different files on the two arms. That diff IS the control:
-                #
-                #   $ diff <(sed -n '/^                set -f$/,/libGLESv2_nvidia.so\*"$/p' layer-cuda/charly.yml) \
-                #          <(sed -n '/^                set -f$/,/libGLESv2_nvidia.so\*"$/p' layer-nvidia/charly.yml)
-                #   (no output -- identical)
-                #
-                # The producer end's reciprocal note (so the next edit there knows a second
-                # copy exists) is filed at opencharly/layer-cuda#27.
-                #
-                # `set -f` is load-bearing: $drv is expanded UNQUOTED -- that is how the -o
-                # chain is spliced into the find(1) expression -- and without it the shell
-                # would pathname-expand `libcuda.so*` against the CURRENT DIRECTORY.
-                set -f
-                drv="-name libnvidia-*.so* -o -name libcuda.so* -o -name libcudadebugger.so* \
-                -o -name libnvcuvid.so* -o -name libnvoptix.so* -o -name libGLX_nvidia.so* \
-                -o -name libEGL_nvidia.so* -o -name libGLESv1_CM_nvidia.so* \
-                -o -name libGLESv2_nvidia.so*"
-                # The lib LAYOUTS and the driver TREES are layout-scoped, not one path:
-                # /usr/lib64 is a symlink to `lib` on Arch/CachyOS but a REAL directory on
-                # Fedora, and multilib adds /usr/lib32. A single hard-coded /usr/lib path
-                # therefore leaves the other trees baked while the strip reports success --
-                # measured on this host, /usr/lib32/vdpau carries
-                # libvdpau_nvidia.so.615.78.08 (opencharly/layer-nvidia#28).
-                #
-                # ONE definition, walked by the baseline, the delete, the nvidia/vdpau/xorg
-                # tree removals and the residue re-check -- the same shape the producer
-                # (layer-cuda v2026.323.1604) ships. Overridable so the step can be
-                # EXECUTED against a fixture: that is how its discriminating power is
-                # proven without a GPU and without an image build.
-                libs=${NVIDIA_STRIP_LIB_DIRS:-/usr/lib /usr/lib32 /usr/lib64}
-                removed=0
-                # THE BASELINE. Snapshot every shared library AND static archive present
-                # BEFORE the strip; the survival assertion below judges the strip against it.
-                # Taken BEFORE the deletion on purpose: a post-hoc search would find the
-                # runtime already gone and could never judge it (layer-cuda#24/#26).
-                before=$(mktemp)
-                for d in $libs; do
-                  if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
-                  find "$d" -maxdepth 1 \( -type f -o -type l \) \( -name '*.so*' -o -name '*.a' \) 2>/dev/null || true
-                done | sort > "$before"
-                for d in $libs; do
-                  if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
-                  out=$(find "$d" -maxdepth 1 \( $drv \) -print -delete 2>/dev/null || true)
-                  n=$(printf '%s\n' "$out" | grep -c . || true)
-                  removed=$((removed + n))
-                done
-                for d in $libs; do
-                  if [ ! -d "$d" ]; then continue; fi
-                  rm -rf "$d/nvidia" "$d/vdpau"
-                  rm -f "$d/xorg/modules/drivers/nvidia_drv.so"
-                done
-                echo "dropped $removed driver library file(s) plus the nvidia/vdpau/xorg driver trees"
-
-                # THE SURVIVAL ASSERTION -- the control this step was missing. It proved what
-                # it DELETED and never what it must KEEP, so an over-broad predicate could
-                # delete the CUDA runtime layer-cuda had just stitched and every build-time
-                # control still passed (opencharly/layer-nvidia#25; the same control landed in
-                # layer-cuda#24/#26). The names are prefix-matched rather than `.so`-matched
-                # so the static archives (libcudart_static.a, libcudadevrt.a,
-                # libcublas_static.a, ...) are inside the guard, not beside it. On an image
-                # that composes no CUDA toolkit the baseline holds none of these and the
-                # guard is vacuously green, which is correct: there is no runtime to keep.
-                killed=0
-                while IFS= read -r p; do
-                  if [ -e "$p" ] || [ -L "$p" ]; then continue; fi
-                  case "$(basename "$p")" in
-                    libcudart*|libcudadevrt*|libnvrtc*|libcublas*|libcudnn*|libnvJitLink*|libcurand*|libcufft*|libcusparse*|libcusolver*|libnccl*)
-                      echo "STRIP DELETED A CUDA RUNTIME/COMPUTE LIBRARY: $p"
-                      killed=$((killed + 1)) ;;
-                  esac
-                done < "$before"
-                rm -f "$before"
-                echo "CUDA runtime/compute libraries the strip deleted: $killed (must be 0)"
-                test "$killed" -eq 0 || exit 1
-
-                # THE ENFORCEMENT, and it lives HERE rather than in a `check:` step on
-                # purpose. This RUN executes in the build container, where no CDI has
-                # injected anything -- so every match below IS image content, with no
-                # ambiguity. A `check:` step runs in a container the GPU seam may attach,
-                # where the host's identical-version libs sit at the same paths, and the
-                # only way to tell them apart from baked ones is /proc/self/mountinfo --
-                # which is not readable on every venue (measured: the probe went red on a
-                # CORRECT fedora image for exactly that reason). A control that has to
-                # guess is worse than a control that cannot be fooled.
-                # \-type f OR \-type l: the failure this replaced was a SYMLINK
-                # (libnvidia-ml.so.1 -> libnvidia-ml.so.620.70.06), so a files-only count
-                # would let the exact bug class walk back in. The delete above has no
-                # -type restriction, so the two sets match.
-                #
-                # ONE definition: the delete, the survival assertion's baseline and this
-                # residue re-check all walk `$libs`, and both find expressions use `$drv`.
-                # The predicate used to be written out twice; three copies is how the
-                # over-broad glob got in and stayed in.
-                left=0
-                for d in $libs; do
-                  if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
-                  n=$(find "$d" -maxdepth 1 \( -type f -o -type l \) \( $drv \) 2>/dev/null | wc -l)
-                  left=$((left + n))
-                done
-                trees=0
-                for d in $libs; do
-                  if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
-                  for t in nvidia vdpau; do
-                    if [ -e "$d/$t" ] || [ -L "$d/$t" ]; then
-                      echo "DRIVER TREE STILL BAKED: $d/$t"
-                      trees=$((trees + 1))
-                    fi
-                  done
-                  if [ -e "$d/xorg/modules/drivers/nvidia_drv.so" ]; then
-                    echo "DRIVER TREE STILL BAKED: $d/xorg/modules/drivers/nvidia_drv.so"
-                    trees=$((trees + 1))
-                  fi
-                done
-                echo "driver library files still baked after the strip: $left"
-                echo "driver trees still baked after the strip: $trees (must be 0)"
-                if [ "$left" -ne 0 ]; then
-                  find $libs -maxdepth 1 -type f \( $drv \) 2>/dev/null | head -5
-                  echo "a LATER layer re-introduced a host-coupled driver library; strip it in that candy's own plan too"
-                  exit 1
-                fi
-                test "$trees" -eq 0 || exit 1
-            # THE coverage for the gpgcheck fix, and it reads the one observable that
-            # DISCRIMINATES. Two wrong candidates, both ruled out by experiment:
-            #   - "the signing key is in the rpmdb" does NOT discriminate — the previous
-            #     code imported the key explicitly via `rpm --import` while still
-            #     installing unverified under NVIDIA's shipped gpgcheck=0, so the key was
-            #     present either way.
-            #   - the vendor .repo file does NOT change — `dnf5 config-manager setopt`
-            #     never rewrites it; /etc/yum.repos.d/nvidia-container-toolkit.repo still
-            #     reads gpgcheck=0 in the built image.
-            # setopt persists into /etc/dnf/repos.override.d/99-config_manager.repo, which
-            # overrides the vendor file and DOES survive into the image. The awk pulls just
-            # this repo's section, because that file also carries other repos' setopts.
-            # Revert `gpgcheck: true` above (or the template's `true` arm) and it fails.
             - check: the nvidia-container-toolkit repo enforces package signature verification, so its packages cannot install unverified
               id: nvidia-container-toolkit-gpgcheck-enforced
               # Fedora-scoped, implemented IN THE COMMAND because the reason is the TOOL, not the
@@ -554,6 +365,31 @@ nvidia-cdi-host:
                   exit 0
                 fi
                 /usr/local/bin/nvidia-cdi-rootless-link create "$uid"
+            - check: the distro package's driver user-space is PRESENT — this layer never strips it
+              id: nvidia-keeps-distro-driver
+              context: [build]
+              exit_status: 0
+              # THE INVERSE OF THE STEP THIS LAYER USED TO CARRY (opencharly/layer-cuda#34). The
+              # duplicate `nvidia-drop-driver-userspace` strip was removed: a POD never composes
+              # this layer (layer-cdi FAILS a build that bakes a driver user-space) and a VM's
+              # GUEST owns its driver, so deleting the Arch arm's driver files left the guest with
+              # a kernel module it could not drive. This check makes a re-added strip FAIL: the
+              # Arch-family package ships the driver user-space, so zero files is a regression.
+              # The Fedora arm packages no driver libraries (libva-nvidia-driver only), so it is
+              # out of scope and says so.
+              command: |
+                  set -eu
+                  if command -v dnf >/dev/null 2>&1 || [ -e /etc/dnf ]; then
+                    echo "fedora: no driver user-space is packaged (libva only) — nothing to keep"
+                    exit 0
+                  fi
+                  n=0
+                  for d in /usr/lib /usr/lib32 /usr/lib64; do
+                    [ -d "$d" ] || continue
+                    n=$((n + $(find "$d" -maxdepth 1 \( -name 'libcuda.so*' -o -name 'libnvidia-*.so*' \) 2>/dev/null | wc -l)))
+                  done
+                  echo "driver user-space files present: $n"
+                  test "$n" -gt 0
             - check: the containerd drop-in registers the nvidia runtime handler
               id: nvidia-handler-dropin
               exit_status: 0
