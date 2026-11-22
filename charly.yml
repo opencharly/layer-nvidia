@@ -238,6 +238,35 @@ nvidia:
                 # run time); reported, not required, because the Fedora arm does not ship it.
                 command -v nvidia-smi >/dev/null 2>&1 && echo "nvidia-smi present" || echo "nvidia-smi absent (injected by CDI at run time)"
 
+            - check: the distro package's driver user-space is PRESENT — this layer never strips it
+              id: nvidia-keeps-distro-driver
+              context: [build]
+              exit_status: 0
+              # THE INVERSE OF THE STEP THIS LAYER USED TO CARRY (opencharly/layer-cuda#34). The
+              # duplicate `nvidia-drop-driver-userspace` strip was removed: a POD never composes
+              # this layer (layer-cdi FAILS a build that bakes a driver user-space) and a VM's
+              # GUEST owns its driver, so deleting the Arch arm's driver files left the guest with
+              # a kernel module it could not drive. This check makes a re-added strip FAIL: the
+              # Arch-family package ships the driver user-space, so zero files is a regression.
+              # The Fedora arm packages no driver libraries (libva-nvidia-driver only), so it is
+              # out of scope and says so.
+              command: |
+                  set -eu
+                  if command -v dnf >/dev/null 2>&1 || [ -e /etc/dnf ]; then
+                    echo "fedora: no driver user-space is packaged (libva only) — nothing to keep"
+                    exit 0
+                  fi
+                  # Overridable so the assertion can be EXECUTED against a fixture (the fixture in
+                  # the PR body points this at a planted tree and prints the same lines).
+                  libs=${CDI_KEEP_LIB_DIRS:-/usr/lib /usr/lib32 /usr/lib64}
+                  n=0
+                  for d in $libs; do
+                    [ -d "$d" ] || continue
+                    n=$((n + $(find "$d" -maxdepth 1 \( -name 'libcuda.so*' -o -name 'libnvidia-*.so*' \) 2>/dev/null | wc -l)))
+                  done
+                  echo "driver user-space files present: $n"
+                  test "$n" -gt 0
+
 nvidia-cdi-host:
     candy:
         description: |
@@ -378,34 +407,6 @@ nvidia-cdi-host:
                   exit 0
                 fi
                 /usr/local/bin/nvidia-cdi-rootless-link create "$uid"
-            - check: the distro package's driver user-space is PRESENT — this layer never strips it
-              id: nvidia-keeps-distro-driver
-              context: [build]
-              exit_status: 0
-              # THE INVERSE OF THE STEP THIS LAYER USED TO CARRY (opencharly/layer-cuda#34). The
-              # duplicate `nvidia-drop-driver-userspace` strip was removed: a POD never composes
-              # this layer (layer-cdi FAILS a build that bakes a driver user-space) and a VM's
-              # GUEST owns its driver, so deleting the Arch arm's driver files left the guest with
-              # a kernel module it could not drive. This check makes a re-added strip FAIL: the
-              # Arch-family package ships the driver user-space, so zero files is a regression.
-              # The Fedora arm packages no driver libraries (libva-nvidia-driver only), so it is
-              # out of scope and says so.
-              command: |
-                  set -eu
-                  if command -v dnf >/dev/null 2>&1 || [ -e /etc/dnf ]; then
-                    echo "fedora: no driver user-space is packaged (libva only) — nothing to keep"
-                    exit 0
-                  fi
-                  # Overridable so the assertion can be EXECUTED against a fixture (the fixture in
-                  # the PR body points this at a planted tree and prints the same lines).
-                  libs=${CDI_KEEP_LIB_DIRS:-/usr/lib /usr/lib32 /usr/lib64}
-                  n=0
-                  for d in $libs; do
-                    [ -d "$d" ] || continue
-                    n=$((n + $(find "$d" -maxdepth 1 \( -name 'libcuda.so*' -o -name 'libnvidia-*.so*' \) 2>/dev/null | wc -l)))
-                  done
-                  echo "driver user-space files present: $n"
-                  test "$n" -gt 0
             - check: the containerd drop-in registers the nvidia runtime handler
               id: nvidia-handler-dropin
               exit_status: 0
