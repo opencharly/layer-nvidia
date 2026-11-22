@@ -120,7 +120,7 @@ nvidia:
             #   - the vendor .repo file does NOT change — `dnf5 config-manager setopt`
             #     never rewrites it; /etc/yum.repos.d/nvidia-container-toolkit.repo still
             #     reads gpgcheck=0 in the built image.
-            # setopt persists into /etc/dnf/repos.override.d/99-config-manager.repo, which
+            # setopt persists into /etc/dnf/repos.override.d/99-config_manager.repo, which
             # overrides the vendor file and DOES survive into the image. The awk pulls just
             # this repo's section, because that file also carries other repos' setopts.
             # Revert `gpgcheck: true` above (or the template's `true` arm) and it fails.
@@ -163,7 +163,7 @@ nvidia:
                 if ! command -v dnf >/dev/null 2>&1 && [ ! -e /etc/dnf ]; then
                   exit 0
                 fi
-                f=/etc/dnf/repos.override.d/99-config-manager.repo
+                f=/etc/dnf/repos.override.d/99-config_manager.repo
                 section=$(awk '/^\[nvidia-container-toolkit\]/{x=1;next} /^\[/{x=0} x' "$f" 2>/dev/null || true)
                 printf '%s\n' "$section" | grep -q 'gpgcheck=1' || {
                   echo "the nvidia-container-toolkit repo does not enforce gpgcheck=1 on this DNF host"
