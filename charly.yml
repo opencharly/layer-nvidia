@@ -1,5 +1,5 @@
 import:
-    - arch: "@github.com/opencharly/distro-arch:v2026.290.1914"
+    - arch: "@github.com/opencharly/distro-arch:v2026.325.1112"
 discover:
     - path: box
       recursive: true
@@ -111,6 +111,19 @@ nvidia:
                   ln -sf /usr/share/vulkan/implicit_layer.d/nvidia_layers.json /etc/vulkan/icd.d/nvidia_layers.json || true
                 true
 
+            # THE coverage for the gpgcheck fix, and it reads the one observable that
+            # DISCRIMINATES. Two wrong candidates, both ruled out by experiment:
+            #   - "the signing key is in the rpmdb" does NOT discriminate — the previous
+            #     code imported the key explicitly via `rpm --import` while still
+            #     installing unverified under NVIDIA's shipped gpgcheck=0, so the key was
+            #     present either way.
+            #   - the vendor .repo file does NOT change — `dnf5 config-manager setopt`
+            #     never rewrites it; /etc/yum.repos.d/nvidia-container-toolkit.repo still
+            #     reads gpgcheck=0 in the built image.
+            # setopt persists into /etc/dnf/repos.override.d/99_config_manager.repo, which
+            # overrides the vendor file and DOES survive into the image. The awk pulls just
+            # this repo's section, because that file also carries other repos' setopts.
+            # Revert `gpgcheck: true` above (or the template's `true` arm) and it fails.
             - check: the nvidia-container-toolkit repo enforces package signature verification, so its packages cannot install unverified
               id: nvidia-container-toolkit-gpgcheck-enforced
               # Fedora-scoped, implemented IN THE COMMAND because the reason is the TOOL, not the
@@ -383,8 +396,11 @@ nvidia-cdi-host:
                     echo "fedora: no driver user-space is packaged (libva only) — nothing to keep"
                     exit 0
                   fi
+                  # Overridable so the assertion can be EXECUTED against a fixture (the fixture in
+                  # the PR body points this at a planted tree and prints the same lines).
+                  libs=${CDI_KEEP_LIB_DIRS:-/usr/lib /usr/lib32 /usr/lib64}
                   n=0
-                  for d in /usr/lib /usr/lib32 /usr/lib64; do
+                  for d in $libs; do
                     [ -d "$d" ] || continue
                     n=$((n + $(find "$d" -maxdepth 1 \( -name 'libcuda.so*' -o -name 'libnvidia-*.so*' \) 2>/dev/null | wc -l)))
                   done
