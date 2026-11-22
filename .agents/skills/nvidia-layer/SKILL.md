@@ -58,25 +58,18 @@ $ ls -l /usr/lib/libnvidia-ml.so*
 CUDA kept working (the injected `libcuda` is what runs), so the breakage is confined
 to NVML: `nvidia-smi`, and every Vulkan/EGL consumer on a skewed host.
 
-One plan step holds the rule now. `nvidia-drop-driver-userspace` removes exactly the set
-the CDI spec injects (keeping the Vulkan ICD and `nvidia-smi`) and asserts the result in
-the SAME `run:` — it prints how many driver libraries are still present and fails the
-build if the count is not zero. Its predicate is ANCHORED: `libcuda.so*` plus an explicit
-`libcudadebugger.so*`, never the `libcuda*` PREFIX. The prefix family also contains the CUDA
-RUNTIME (`libcudart.so*`, `libcudart_static.a`, `libcudadevrt.a`), so a prefix glob deletes
-what `layer-cuda` stitches whenever this layer is applied after that stitch — measured on a
-pod image, where `/usr/lib/libcudart.so*` vanished and `layer-cuda`'s own cudart check went
-red (opencharly/layer-nvidia#25). The five-line block is byte-identical to
-`cuda-drop-driver-userspace`'s in `opencharly/layer-cuda` (tag `v2026.323.0138`); `diff` of
-the two `drv=` blocks is the drift control, and both files name it.
+**This layer does not remove the driver.** A POD never composes it: `layer-cdi` FAILS a build that
+bakes a driver user-space, and the host injects one per container through CDI — which is what the
+NVML mismatch above is. A VM's GUEST owns its kernel module and therefore its driver user-space, so
+the distro package's files must stay. The duplicate `nvidia-drop-driver-userspace` strip this layer
+used to carry was deleted with opencharly/layer-cuda#34 — it was the copy that could strip a HOST
+when composed on `nvidia-cdi-host`; layer-cuda's strip remains the single implementation, on the POD
+side, where it belongs.
 
-The step also asserts what it KEEPS: a pre-strip baseline of every `*.so*` AND `*.a` in the
-image, and a build failure naming any CUDA runtime/compute library that disappeared. The
-residue count alone cannot tell the two families apart — that is how the runtime came to be
-deleted while every build-time control stayed green. Both the library loop and the
-`nvidia`/`vdpau`/`xorg` tree removals walk every lib layout that exists (`/usr/lib{,32,64}`),
-because a real (non-symlinked) `/usr/lib64` on Fedora and the multilib `/usr/lib32` would
-otherwise keep a baked driver tree while the strip reported success.
+The guard is now the INVERSE. `nvidia-keeps-distro-driver` (build context, in the `nvidia` candy so
+every composition runs it) asserts the ARCH arm's package-provided driver user-space is PRESENT; the
+Fedora arm packages none, says so, and passes. A re-added strip fails it. Its layout is overridable
+(`CDI_KEEP_LIB_DIRS`), so the check can be executed against a fixture instead of only by reading it.
 
 That step executes in the BUILD container, where no CDI
 has injected anything, so a remaining match is unambiguously image content; the enforcement
