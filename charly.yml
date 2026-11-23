@@ -1,5 +1,5 @@
 import:
-    - arch: "@github.com/opencharly/distro-arch:v2026.325.1112"
+    - arch: "@github.com/opencharly/distro-arch:v2026.326.1455"
 discover:
     - path: box
       recursive: true
