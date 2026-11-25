@@ -34,11 +34,11 @@ Per-distro driver packages:
 Compose the layer by pinning this repo in a box's `candy:` list:
 
 ```yaml
-my-box:
+my-host-image:                        # a HOST image, or a passthrough VM's guest
   candy:
-    base: fedora                       # or cachyos / omarchy for the Arch driver layout
+    base: fedora-nonfree              # or cachyos.cachyos for the Arch driver layout
     candy:
-      - '@github.com/opencharly/layer-nvidia:v2026.245.1541'
+      - '@github.com/opencharly/layer-nvidia:v2026.329.1714'
 ```
 
 Once the image is built and the GPU is attached by the runtime:
@@ -50,8 +50,10 @@ nvidia-ctk --version       # CDI toolkit
 
 The layer bakes every artifact (package, `nvidia-ctk` binary, exported path,
 Vulkan ICD directory) into the image, so it is verifiable without a physical
-GPU. A GPU-accelerated box pairs it with `cuda` (CUDA toolkit, cuDNN) — for
-example `python-ml`, `jupyter`, `ollama`, and `comfyui`.
+GPU. **A pod never composes this layer**: a pod takes the driver from the host through CDI on the
+`podcdi.pod-cdi` base. A host image pairs it with `cuda` when it compiles, and a passthrough VM
+composes both. The Fedora GPU boxes (`python-ml`, `jupyter`, `ollama`, `comfyui`) were dropped
+(opencharly/opencharly#1287).
 
 ## CDI host layer
 
