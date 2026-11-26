@@ -16,7 +16,7 @@ The NVIDIA GPU driver-runtime layer — the distro package arms for the driver u
 
 **A pod never composes this layer.** A pod takes the driver from the host through CDI: the pod base
 is `podcdi.pod-cdi`, which composes `layer-cdi` (the contract) and, today, the CUDA toolkit. This
-layer is for a HOST image (`nvidia-cdi-host`) and a passthrough VM (`vm-nvidia`), where the guest
+layer is for a HOST image (`nvidia-cdi-host`) and a passthrough VM, where the guest
 bakes the driver because no CDI injection exists there. The Fedora GPU boxes were dropped
 (opencharly/opencharly#1287); the GPU workload images are CachyOS-only.
 
@@ -25,7 +25,7 @@ bakes the driver because no CDI injection exists there. The Fedora GPU boxes wer
 | Property | Value |
 |----------|-------|
 | Package arms | Fedora rpm (`nvidia-driver*` repo) + Arch pac (`nvidia-utils`) |
-| Consumers | `nvidia-cdi-host` (host image), `vm-nvidia` (passthrough VM) |
+| Consumers | `nvidia-cdi-host` (host image), a passthrough VM box |
 | Never composed by | a pod — it uses `podcdi.pod-cdi` and CDI injection |
 
 ## Layer Content
@@ -38,8 +38,7 @@ bakes the driver because no CDI injection exists there. The Fedora GPU boxes wer
 
 - `nvidia-cdi-host` (`opencharly/layer-nvidia`) — a HOST image: the containerd handler, the durable
   `nvidia-cdi-refresh` units and the rootless spec link (see **CDI host layer** below).
-- `vm-nvidia` (`opencharly/vm-nvidia`) — a passthrough VM, which bakes the driver because the guest
-  has no CDI injection.
+- a passthrough VM box — bakes the driver because the guest has no CDI injection.
 
 ## Key Candies
 
