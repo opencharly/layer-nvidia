@@ -142,7 +142,7 @@ See `/charly-core:charly-doctor` (Hardware Detection) for the detection probe an
 
 ### Cross-GPU portability (nvidia-base boxes on AMD hosts)
 
-Boxes that declare `base: nvidia` still run cleanly on hosts with a different GPU vendor — the NVIDIA runtime libraries ride along as benign passengers. `charly config` auto-detects whatever the host actually exposes (e.g., `/dev/dri/renderD128` + `/dev/kfd` for an AMD RDNA3), injects those device nodes + `DRINODE`, and Mesa handles rendering. For example, `selkies-labwc-nvidia` (base: nvidia) runs on an AMD `gfx 11.0.0` host — all supervisord programs RUNNING, selkies streaming over Mesa, no CUDA calls attempted. The CUDA toolkit in the box simply goes unused.
+Boxes that declare `base: nvidia` still run cleanly on hosts with a different GPU vendor — the NVIDIA runtime libraries ride along as benign passengers. `charly config` auto-detects whatever the host actually exposes (e.g., `/dev/dri/renderD128` + `/dev/kfd` for an AMD RDNA3), injects those device nodes + `DRINODE`, and Mesa handles rendering. For example, a `base: nvidia` box runs on an AMD `gfx 11.0.0` host — all supervisord programs RUNNING, selkies streaming over Mesa, no CUDA calls attempted. The CUDA toolkit in the box simply goes unused.
 
 ## Install tasks
 
