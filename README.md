@@ -98,8 +98,8 @@ disposable bed exists.
 
 - Owning skill: `/charly-distros:nvidia`
 - CUDA toolkit: `/charly-distros:cuda`
-- Derived GPU boxes: `/charly-languages:python-ml`, `/charly-jupyter:jupyter`,
-  `/charly-ollama:ollama`, `/charly-comfyui:comfyui`
+- Derived GPU boxes: `/charly-languages:python-ml`, `/charly-ollama:ollama`,
+  `/charly-comfyui:comfyui`
 - Arch/CachyOS GPU base sibling: `cachyos.nvidia` in `opencharly/distro-cachyos`
 - [`opencharly/charly`](https://github.com/opencharly/charly) — the charly CLI and image builder
 - [`opencharly/opencharly`](https://github.com/opencharly/opencharly) — the umbrella
